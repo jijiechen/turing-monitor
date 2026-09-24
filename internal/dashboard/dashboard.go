@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jijiechen/turing-monitor/internal/metrics"
+	"github.com/jijiechen/turing-monitor/internal/orient"
 	"github.com/jijiechen/turing-monitor/internal/proto"
 )
 
@@ -31,14 +32,20 @@ type Options struct {
 	Theme Theme
 	// Log receives one line per frame when non-nil.
 	Log io.Writer
+	// Orientation is how the panel is mounted. The dashboard is drawn at the
+	// size the viewer sees and rotated into the panel's native orientation, so
+	// a panel on its side gets a wide layout rather than a tall one read
+	// sideways.
+	Orientation orient.Orientation
 }
 
 // DefaultOptions returns sensible defaults for a panel dashboard.
 func DefaultOptions() Options {
 	return Options{
-		Interval: time.Second,
-		Quality:  80,
-		Theme:    DefaultTheme,
+		Interval:    time.Second,
+		Quality:     80,
+		Theme:       DefaultTheme,
+		Orientation: orient.Portrait,
 	}
 }
 
@@ -56,7 +63,12 @@ func Run(ctx context.Context, dev Pusher, opts Options) error {
 		opts.Quality = 80
 	}
 
-	w, h := dev.Portrait()
+	// Draw at the size the viewer sees, then rotate into the panel's native
+	// orientation. Rotating the finished frame rather than drawing sideways
+	// keeps the text upright and, because a quarter turn is an exact pixel
+	// move, leaves it as crisp as it was drawn.
+	nativeW, nativeH := dev.Portrait()
+	w, h := opts.Orientation.ContentSize(nativeW, nativeH)
 
 	var prev metrics.Snapshot
 	havePrev := false
@@ -77,7 +89,7 @@ func Run(ctx context.Context, dev Pusher, opts Options) error {
 		}
 
 		img := Render(cur, rates, w, h, opts.Theme)
-		frame, err := encodeFrame(img, opts.Quality)
+		frame, err := encodeFrame(opts.Orientation.ToNative(img), opts.Quality)
 		if err != nil {
 			return err
 		}

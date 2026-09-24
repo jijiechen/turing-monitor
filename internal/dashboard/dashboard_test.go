@@ -29,18 +29,56 @@ func sample() metrics.Snapshot {
 }
 
 func TestRenderSizeAndBounds(t *testing.T) {
-	const w, h = 720, 1280
-	img := Render(sample(), metrics.Rates{CPUPercent: 15, RxPerSec: 4096, TxPerSec: 2048}, w, h, DefaultTheme)
+	for _, size := range []struct{ w, h int }{
+		{720, 1280}, // the panel as it comes
+		{1280, 720}, // the panel on its side
+	} {
+		img := Render(sample(), metrics.Rates{CPUPercent: 15, RxPerSec: 4096, TxPerSec: 2048},
+			size.w, size.h, DefaultTheme)
 
-	if got := img.Bounds().Dx(); got != w {
-		t.Errorf("width = %d, want %d", got, w)
+		if got := img.Bounds().Dx(); got != size.w {
+			t.Errorf("%dx%d: width = %d", size.w, size.h, got)
+		}
+		if got := img.Bounds().Dy(); got != size.h {
+			t.Errorf("%dx%d: height = %d", size.w, size.h, got)
+		}
+		if bytes.Equal(img.Pix, make([]byte, len(img.Pix))) {
+			t.Errorf("%dx%d: frame is entirely zero-valued; nothing was drawn", size.w, size.h)
+		}
 	}
-	if got := img.Bounds().Dy(); got != h {
-		t.Errorf("height = %d, want %d", got, h)
+}
+
+// TestRenderWideDrawsBothColumns checks the wide layout actually uses its width.
+//
+// The failure mode it guards against is the tall layout being reused for a wide
+// frame, which draws correctly but leaves most of the width as background. That
+// looks fine in a small preview and obviously wrong on the panel, so it is
+// worth an assertion: each half of a wide frame must have cards painted in it.
+func TestRenderWideDrawsBothColumns(t *testing.T) {
+	const w, h = 1280, 720
+	img := Render(sample(), metrics.Rates{CPUPercent: 40, RxPerSec: 4096, TxPerSec: 2048}, w, h, DefaultTheme)
+
+	// Cards sit on a slightly lighter panel colour than the background, so
+	// counting non-background pixels per half shows whether both were used.
+	bg := DefaultTheme.Background
+	counts := [2]int{}
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			if uint8(r>>8) == bg.R && uint8(g>>8) == bg.G && uint8(b>>8) == bg.B {
+				continue
+			}
+			counts[x/(w/2)]++
+		}
 	}
-	// The background is dark; the CPU accent should have painted something.
-	if bytes.Equal(img.Pix, make([]byte, len(img.Pix))) {
-		t.Error("frame is entirely zero-valued; nothing was drawn")
+
+	for i, got := range counts {
+		// A tenth of a half is far below what a drawn column produces and far
+		// above what an empty one would.
+		if min := (w / 2) * h / 10; got < min {
+			t.Errorf("column %d has %d painted pixels, want at least %d; "+
+				"the wide layout may not be drawing into it", i, got, min)
+		}
 	}
 }
 
@@ -58,9 +96,11 @@ func TestRenderDegenerateInputs(t *testing.T) {
 	for name, s := range cases {
 		t.Run(name, func(t *testing.T) {
 			// A panic here is the failure mode we care about.
-			img := Render(s, metrics.Rates{}, 720, 1280, DefaultTheme)
-			if img == nil {
-				t.Fatal("Render returned nil")
+			for _, size := range []struct{ w, h int }{{720, 1280}, {1280, 720}} {
+				img := Render(s, metrics.Rates{}, size.w, size.h, DefaultTheme)
+				if img == nil {
+					t.Fatalf("%dx%d: Render returned nil", size.w, size.h)
+				}
 			}
 		})
 	}

@@ -45,9 +45,10 @@ Usage:
                                  stream an MP4 or raw Annex-B H.264 file
   turzx brightness <0-100>       set the backlight
   turzx rotate <0-3>             set the display rotation
-  turzx monitor [--fps 30] [--bitrate 16000] [--output NAME] [--size WxH]
+  turzx monitor [--fps 30] [--bitrate 16000] [--orientation NAME]
+                [--output NAME] [--size WxH]
                                  use the panel as an extended desktop
-  turzx dashboard [--interval 1s]
+  turzx dashboard [--interval 1s] [--orientation NAME]
                                  live system monitor on the panel
   turzx storage                  report the panel's SD card usage
   turzx extract <in.mp4> <out.h264>
@@ -596,8 +597,10 @@ func cmdDashboard(ctx context.Context, opts dashboardOpts) error {
 	run := dashboard.DefaultOptions()
 	run.Interval = opts.interval
 	run.Log = opts.log
+	run.Orientation = opts.orientation
 
-	fmt.Printf("dashboard refreshing every %s — press Ctrl-C to stop\n", opts.interval)
+	fmt.Printf("dashboard refreshing every %s (%s) — press Ctrl-C to stop\n",
+		opts.interval, opts.orientation)
 
 	return usb.Supervise(ctx, newTimestampWriter(os.Stdout), func(dev *usb.Device) error {
 		return dashboard.Run(ctx, dev, run)
@@ -606,18 +609,29 @@ func cmdDashboard(ctx context.Context, opts dashboardOpts) error {
 
 // dashboardOpts holds the parsed flags for the dashboard subcommand.
 type dashboardOpts struct {
-	interval time.Duration
-	log      io.Writer
+	interval    time.Duration
+	log         io.Writer
+	orientation orient.Orientation
 }
 
 // parseDashboardArgs accepts: [--interval <duration>]
 func parseDashboardArgs(args []string) (dashboardOpts, error) {
-	opts := dashboardOpts{interval: time.Second}
+	opts := dashboardOpts{interval: time.Second, orientation: orient.Portrait}
 	if verbose {
 		opts.log = os.Stdout
 	}
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
+		case arg == "--orientation" || arg == "--rotate":
+			if i+1 >= len(args) {
+				return opts, errors.New("--orientation needs a value: " + orientationNames())
+			}
+			i++
+			o, err := orient.Parse(args[i])
+			if err != nil {
+				return opts, err
+			}
+			opts.orientation = o
 		case arg == "--interval":
 			if i+1 >= len(args) {
 				return opts, errors.New("--interval needs a value, e.g. 500ms or 2s")
