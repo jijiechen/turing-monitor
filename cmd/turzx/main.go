@@ -458,7 +458,7 @@ func cmdMonitor(ctx context.Context, opts monitorOpts) error {
 	defer session.Close()
 	fmt.Printf("capturing %dx%d at %d fps, %d kbit/s\n", w, h, opts.fps, opts.bitrate/1000)
 
-	return usb.Supervise(ctx, os.Stdout, func(dev *usb.Device) error {
+	return usb.Supervise(ctx, newTimestampWriter(os.Stdout), func(dev *usb.Device) error {
 		return streamToPanel(ctx, dev, session, opts)
 	})
 }
@@ -524,7 +524,7 @@ func cmdDashboard(ctx context.Context, opts dashboardOpts) error {
 
 	fmt.Printf("dashboard refreshing every %s — press Ctrl-C to stop\n", opts.interval)
 
-	return usb.Supervise(ctx, os.Stdout, func(dev *usb.Device) error {
+	return usb.Supervise(ctx, newTimestampWriter(os.Stdout), func(dev *usb.Device) error {
 		return dashboard.Run(ctx, dev, run)
 	})
 }
