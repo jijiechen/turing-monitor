@@ -16,9 +16,9 @@ project talks to the panel directly over USB from userspace.
 | Video (MP4 and raw H.264, streamed) | Working |
 | Brightness, rotation, storage info | Working |
 | `clear` | Working (via JPEG; the PNG command is unreliable) |
+| Live system dashboard | Working (macOS verified; Linux written, untested on hardware) |
 | macOS | Working |
 | Ubuntu 24.04 | Code is platform-neutral; **not yet verified on real hardware** |
-| Live dashboard | Not yet implemented |
 | Extended desktop | Not yet implemented |
 | Playback of files stored on the panel | Protocol implemented, blocked on hardware — needs an SD card |
 
@@ -58,6 +58,8 @@ turzx video <file>             stream an MP4 or raw Annex-B H.264 file
 turzx brightness <0-100>       set the backlight
 turzx rotate <0-3>             set the display rotation
 turzx storage                  report the panel's SD card usage
+turzx dashboard                live system monitor, refreshed every second
+turzx dashboard --interval 2s  ...at a different refresh rate
 ```
 
 Examples:
@@ -67,6 +69,7 @@ turzx info
 turzx image ~/Pictures/photo.jpg      # any size; scaled and letterboxed
 turzx video ~/Movies/clip.mp4         # demuxed to H.264 and streamed
 turzx brightness 60
+turzx dashboard --interval 1s   # CPU, memory, swap, network, disk, temperatures
 ```
 
 Images are scaled to the panel's native resolution and letterboxed with black;
@@ -90,6 +93,8 @@ cmd/turzx/         command-line interface
 internal/proto/    wire protocol: encryption, framing, commands (pure Go)
 internal/usb/      USB transport and high-level panel operations
 internal/media/    MP4 -> Annex-B H.264 demuxer (pure Go, no ffmpeg needed)
+internal/metrics/  system statistics, per platform (procfs, or Mach host stats)
+internal/dashboard/ renders metrics to a frame and pushes it
 docs/PROTOCOL.md   the reverse-engineered protocol reference
 ```
 

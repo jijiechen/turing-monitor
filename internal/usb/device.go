@@ -193,6 +193,10 @@ type Device struct {
 // Model returns the panel variant.
 func (d *Device) Model() proto.Model { return d.model }
 
+// Portrait returns the panel's native dimensions. The device does not scale,
+// so frames must be rendered at exactly this size.
+func (d *Device) Portrait() (int, int) { return d.model.Portrait() }
+
 // Serial returns the panel's USB serial number, which is stable per unit.
 func (d *Device) Serial() string { return d.serial }
 

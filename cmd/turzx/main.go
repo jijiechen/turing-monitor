@@ -8,15 +8,20 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
+	"github.com/jijiechen/turing-monitor/internal/dashboard"
 	"github.com/jijiechen/turing-monitor/internal/media"
 	"github.com/jijiechen/turing-monitor/internal/usb"
 )
@@ -32,11 +37,13 @@ Usage:
                                  stream an MP4 or raw Annex-B H.264 file
   turzx brightness <0-100>       set the backlight
   turzx rotate <0-3>             set the display rotation
+  turzx dashboard [--interval 1s]
+                                 live system monitor on the panel
   turzx storage                  report the panel's SD card usage
   turzx extract <in.mp4> <out.h264>
                                  convert an MP4 to raw Annex-B H.264
 
-Run with no arguments for this message.
+Add --verbose to log each frame while the dashboard runs.\nRun with no arguments for this message.
 `
 
 func main() {
@@ -46,7 +53,26 @@ func main() {
 	}
 }
 
+// verbose enables per-frame logging for long-running commands.
+var verbose bool
+
 func run(args []string) error {
+	if len(args) == 0 {
+		fmt.Print(usage)
+		return nil
+	}
+
+	// --verbose may appear anywhere on the command line, so strip it before
+	// dispatching.
+	filtered := make([]string, 0, len(args))
+	for _, a := range args {
+		if a == "--verbose" || a == "-v" {
+			verbose = true
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+	args = filtered
 	if len(args) == 0 {
 		fmt.Print(usage)
 		return nil
@@ -115,6 +141,22 @@ func run(args []string) error {
 			return errors.New("usage: turzx extract <input.mp4> <output.h264>")
 		}
 		return cmdExtract(rest[0], rest[1])
+
+	case "dashboard":
+		interval, err := parseInterval(rest)
+		if err != nil {
+			return err
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+
+		opts := dashboard.DefaultOptions()
+		opts.Interval = interval
+		if verbose {
+			opts.Log = os.Stdout
+		}
+		fmt.Printf("dashboard on %s, refreshing every %s — press Ctrl-C to stop\n", dev.Model(), interval)
+		return dashboard.Run(ctx, dev, opts)
 
 	case "storage":
 		s, err := dev.StorageInfo()
@@ -266,6 +308,33 @@ func streamOnce(dev *usb.Device, f *os.File, size int64, isMP4 bool, path string
 	}
 	fmt.Printf("streaming %s to %s\n", filepath.Base(path), dev.Model())
 	return dev.StreamH264(src)
+}
+
+// parseInterval accepts: [--interval <duration>]
+func parseInterval(args []string) (time.Duration, error) {
+	interval := time.Second
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--interval":
+			if i+1 >= len(args) {
+				return 0, errors.New("--interval needs a value, e.g. 500ms or 2s")
+			}
+			i++
+			d, err := time.ParseDuration(args[i])
+			if err != nil {
+				return 0, fmt.Errorf("invalid --interval %q: %w", args[i], err)
+			}
+			if d < 100*time.Millisecond {
+				return 0, errors.New("--interval must be at least 100ms")
+			}
+			interval = d
+		case strings.HasPrefix(arg, "-"):
+			return 0, fmt.Errorf("unknown flag %q", arg)
+		default:
+			return 0, fmt.Errorf("unexpected argument %q", arg)
+		}
+	}
+	return interval, nil
 }
 
 // cmdExtract converts an MP4 to a raw Annex-B H.264 file, so the stream can be
