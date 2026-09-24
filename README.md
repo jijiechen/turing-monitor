@@ -42,9 +42,16 @@ cd turing-monitor
 PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig" go build -o turzx ./cmd/turzx
 ```
 
-Requires Go 1.24 or newer. If you would rather not install Go, download a
-prebuilt binary from [Releases](../../releases) instead — macOS builds are
-unsigned, so the first run needs **right-click → Open**, or:
+Requires Go 1.24 or newer. If you have Go, this is shorter than cloning:
+
+```sh
+PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig" \
+  go install github.com/jijiechen/turing-monitor/cmd/turzx@latest
+```
+
+If you would rather not install Go, download a prebuilt binary from
+[Releases](../../releases) instead — macOS builds are unsigned, so the first
+run needs **right-click → Open**, or:
 
 ```sh
 xattr -d com.apple.quarantine ./turzx
