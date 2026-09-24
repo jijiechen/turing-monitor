@@ -76,7 +76,7 @@ Check the panel is found first:
 
 ```sh
 ./turzx info
-# Turing 5.2" (720x1280)  serial 2e1fe5abea900204  bus 2 addr 1
+# Turing 5.2" (720x1280)  serial 0123456789abcdef  bus 2 addr 1
 ```
 
 ### Show an image
