@@ -1,0 +1,6 @@
+# Built binary
+/turzx
+/dist/
+
+# macOS
+.DS_Store

@@ -1,0 +1,27 @@
+# TURZX / 图灵智显 USB displays in LCD mode.
+#
+# These panels use Ingenic's vendor ID (0x1cbe), not the WCH vendor ID (0x1a86)
+# that the vendor's Windows driver targets -- that one covers the panel's
+# separate "desktop mode" identity. See docs/PROTOCOL.md.
+#
+# Install to /etc/udev/rules.d/99-turzx.rules, then:
+#
+#     sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# and replug the panel. TAG+="uaccess" grants the user at the active seat
+# access; the GROUP fallback covers headless and non-systemd-login setups.
+
+# Turing 2.8" round
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0028", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Turing 4.6"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0046", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Turing 5.2"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0050", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Turing 8.0"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0080", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Turing 8.8"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0088", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Turing 9.2"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0092", MODE="0660", GROUP="plugdev", TAG+="uaccess"
+# Turing 12.3"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1cbe", ATTRS{idProduct}=="0123", MODE="0660", GROUP="plugdev", TAG+="uaccess"
