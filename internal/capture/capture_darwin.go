@@ -4,13 +4,13 @@ package capture
 
 /*
 #cgo CFLAGS: -fobjc-arc
-#cgo LDFLAGS: -framework Foundation -framework ScreenCaptureKit -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework AppKit
+#cgo LDFLAGS: -framework Foundation -framework ScreenCaptureKit -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework AppKit -framework Accelerate
 
 #include <stdint.h>
 #include <stdlib.h>
 
 // Implemented in capture_darwin.m.
-int  turzx_capture_start(uint32_t displayID, int width, int height, int fps, int bitrate);
+int  turzx_capture_start(uint32_t displayID, int width, int height, int encodeWidth, int encodeHeight, int quarterTurns, int fps, int bitrate);
 int  turzx_capture_read(uint8_t *dst, int cap);
 int  turzx_capture_error(void);
 void turzx_capture_stop(void);
@@ -42,8 +42,18 @@ func Start(opts Options) (*Session, error) {
 		return nil, err
 	}
 
-	rc := C.turzx_capture_start(C.uint32_t(opts.DisplayID), C.int(opts.Width),
-		C.int(opts.Height), C.int(opts.FPS), C.int(opts.Bitrate))
+	// Capture at the size the viewer sees, encode at the size the panel needs,
+	// rotating in between. When they are equal and the turn count is zero this
+	// is the same single-size path as before.
+	encW, encH := opts.Width, opts.Height
+	if opts.QuarterTurns%2 != 0 {
+		encW, encH = opts.Height, opts.Width
+	}
+
+	rc := C.turzx_capture_start(C.uint32_t(opts.DisplayID),
+		C.int(opts.Width), C.int(opts.Height),
+		C.int(encW), C.int(encH), C.int(opts.QuarterTurns),
+		C.int(opts.FPS), C.int(opts.Bitrate))
 	if rc != 0 {
 		return nil, fmt.Errorf("capture: %s", describeError(int(rc)))
 	}

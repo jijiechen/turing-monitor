@@ -380,11 +380,15 @@ type monitorOpts struct {
 	// width and height size the virtual display when no panel is attached to
 	// ask. A service may well start before the panel is plugged in.
 	width, height int
+	// orientation is how the panel is physically mounted. The virtual display
+	// is created at the size the viewer sees, and frames are rotated on the
+	// way to the encoder.
+	orientation orient.Orientation
 }
 
 // parseMonitorArgs accepts: [--fps N] [--bitrate KBPS]
 func parseMonitorArgs(args []string) (monitorOpts, error) {
-	opts := monitorOpts{fps: 30, bitrate: 16_000_000, width: 720, height: 1280}
+	opts := monitorOpts{fps: 30, bitrate: 16_000_000, width: 720, height: 1280, orientation: orient.Portrait}
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
 		case arg == "--fps":
@@ -407,6 +411,16 @@ func parseMonitorArgs(args []string) (monitorOpts, error) {
 				return opts, fmt.Errorf("invalid --bitrate %q: expected kbit/s, at least 100", args[i])
 			}
 			opts.bitrate = n * 1000
+		case arg == "--orientation" || arg == "--rotate":
+			if i+1 >= len(args) {
+				return opts, errors.New("--orientation needs a value: " + orientationNames())
+			}
+			i++
+			o, err := orient.Parse(args[i])
+			if err != nil {
+				return opts, err
+			}
+			opts.orientation = o
 		case arg == "--size":
 			if i+1 >= len(args) {
 				return opts, errors.New("--size needs a value like 720x1280")
@@ -470,14 +484,18 @@ func cmdMonitor(ctx context.Context, opts monitorOpts) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	w, h := opts.width, opts.height
+	nativeW, nativeH := opts.width, opts.height
 
 	// If a panel is attached, prefer the resolution it reports over the
 	// configured default. Discover does not claim the interface, so this is
 	// safe to do before the supervised session takes the device.
 	if found, err := usb.Discover(); err == nil && len(found) > 0 {
-		w, h = found[0].Model.Portrait()
+		nativeW, nativeH = found[0].Model.Portrait()
 	}
+
+	// The virtual display is the size the viewer sees, which is the panel's
+	// native size only when the panel is mounted the way it comes.
+	w, h := opts.orientation.ContentSize(nativeW, nativeH)
 
 	display, err := vdisplay.Create(vdisplay.Options{
 		Name:      "TURZX",
@@ -490,7 +508,7 @@ func cmdMonitor(ctx context.Context, opts monitorOpts) error {
 		return err
 	}
 	defer display.Close()
-	fmt.Printf("virtual display %s at %dx%d\n", displayLabel(display), w, h)
+	fmt.Printf("virtual display %s at %dx%d (%s)\n", displayLabel(display), w, h, opts.orientation)
 
 	// On macOS the WindowServer publishes a new display asynchronously, and
 	// asking ScreenCaptureKit to enumerate it too early finds nothing. On
@@ -499,19 +517,21 @@ func cmdMonitor(ctx context.Context, opts monitorOpts) error {
 
 	originX, originY := display.Origin()
 	session, err := capture.Start(capture.Options{
-		DisplayID: display.ID(),
-		X:         originX,
-		Y:         originY,
-		Width:     w,
-		Height:    h,
-		FPS:       opts.fps,
-		Bitrate:   opts.bitrate,
+		DisplayID:    display.ID(),
+		X:            originX,
+		Y:            originY,
+		Width:        w,
+		Height:       h,
+		QuarterTurns: int(opts.orientation),
+		FPS:          opts.fps,
+		Bitrate:      opts.bitrate,
 	})
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	fmt.Printf("capturing %dx%d at %d fps, %d kbit/s\n", w, h, opts.fps, opts.bitrate/1000)
+	fmt.Printf("capturing %dx%d, encoding %dx%d at %d fps, %d kbit/s\n",
+		w, h, nativeW, nativeH, opts.fps, opts.bitrate/1000)
 
 	return usb.Supervise(ctx, newTimestampWriter(os.Stdout), func(dev *usb.Device) error {
 		return streamToPanel(ctx, dev, session, opts)

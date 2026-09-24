@@ -69,6 +69,10 @@ func Start(opts Options) (*Session, error) {
 		"-framerate", strconv.Itoa(opts.FPS),
 		"-video_size", fmt.Sprintf("%dx%d", opts.Width, opts.Height),
 		"-i", input,
+		// ffmpeg rotates as part of encoding, so a quarter turn costs nothing
+		// beyond the normal transcode. The transposition values are ffmpeg's:
+		// 1 is a quarter turn clockwise, 2 a half turn, 3 anticlockwise.
+		"-vf", fmt.Sprintf("transpose=%d", opts.QuarterTurns),
 		"-c:v", "libx264",
 		// ultrafast + zerolatency keeps the encoder from buffering, which
 		// would otherwise add whole frames of delay.

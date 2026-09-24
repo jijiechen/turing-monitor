@@ -16,9 +16,15 @@ type Options struct {
 	// X and Y are the display's origin in screen coordinates, used where
 	// capture is addressed by region (Linux with ffmpeg's x11grab).
 	X, Y int
-	// Width and Height are the capture resolution in pixels, normally the
-	// panel's native size.
+	// Width and Height are the capture resolution in pixels: the size the
+	// viewer sees, which is the panel's native size only when the panel is
+	// mounted the way it comes.
 	Width, Height int
+	// QuarterTurns is how many quarter turns clockwise the captured frames
+	// need before they match the panel's native orientation. Zero means no
+	// rotation. The output is encoded at the rotated size, so there is no
+	// separate scaling step.
+	QuarterTurns int
 	// FPS is the requested frame rate. Zero means 30.
 	FPS int
 	// Bitrate is the target H.264 bitrate in bits per second. Zero means a

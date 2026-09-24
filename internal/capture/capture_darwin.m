@@ -15,6 +15,7 @@
 #import <VideoToolbox/VideoToolbox.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
+#import <Accelerate/Accelerate.h>
 #import <dispatch/dispatch.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -132,6 +133,85 @@ static void encodeCallback(void *refcon, void *frameRefcon, OSStatus status,
 	if (off > 0) queue_push(buf, off);
 }
 
+// --- Rotation ---------------------------------------------------------------
+
+// gQuarterTurns is how many quarter turns clockwise the captured frames need
+// before they match the panel's native orientation. Zero means the panel is
+// mounted the way it comes and no rotation is applied at all.
+static int gQuarterTurns = 0;
+
+// turzxVImageRotation converts a count of quarter turns clockwise into the
+// constant vImage expects.
+//
+// It cannot simply cast the count: vImage numbers its constants by degrees
+// anticlockwise, so kRotate90DegreesClockwise is 3 and kRotate270DegreesClockwise
+// is 1. Casting 1 straight through therefore turns the picture the wrong way,
+// which is subtle enough to look like a bug in the caller.
+static uint8_t turzxVImageRotation(int quarterTurnsClockwise) {
+	switch (((quarterTurnsClockwise % 4) + 4) % 4) {
+	case 1:  return kRotate90DegreesClockwise;
+	case 2:  return kRotate180DegreesClockwise;
+	case 3:  return kRotate270DegreesClockwise;
+	default: return kRotate0DegreesClockwise;
+	}
+}
+
+// turzxRotatePixelBuffer returns a new buffer holding src turned clockwise by
+// gQuarterTurns. It uses Accelerate, which does the turn with SIMD and a
+// transpose rather than a per-pixel copy.
+//
+// The caller releases the result. NULL means the rotation failed, in which case
+// the caller should encode the original rather than drop the frame.
+static CVPixelBufferRef turzxRotatePixelBuffer(CVPixelBufferRef src, int quarterTurns) {
+	size_t srcW = CVPixelBufferGetWidth(src);
+	size_t srcH = CVPixelBufferGetHeight(src);
+	size_t dstW = srcW, dstH = srcH;
+	if (quarterTurns == 1 || quarterTurns == 3) {
+		dstW = srcH;
+		dstH = srcW;
+	}
+
+	NSDictionary *attrs = @{ (id)kCVPixelBufferIOSurfacePropertiesKey : @{} };
+	CVPixelBufferRef dst = NULL;
+	if (CVPixelBufferCreate(kCFAllocatorDefault, dstW, dstH,
+	                        kCVPixelFormatType_32BGRA,
+	                        (__bridge CFDictionaryRef)attrs, &dst) != kCVReturnSuccess) {
+		return NULL;
+	}
+
+	CVPixelBufferLockBaseAddress(src, kCVPixelBufferLock_ReadOnly);
+	CVPixelBufferLockBaseAddress(dst, 0);
+
+	vImage_Buffer in = {
+		.data = CVPixelBufferGetBaseAddress(src),
+		.height = srcH,
+		.width = srcW,
+		.rowBytes = CVPixelBufferGetBytesPerRow(src),
+	};
+	vImage_Buffer out = {
+		.data = CVPixelBufferGetBaseAddress(dst),
+		.height = dstH,
+		.width = dstW,
+		.rowBytes = CVPixelBufferGetBytesPerRow(dst),
+	};
+
+	// A quarter turn maps the image exactly, so the background colour is never
+	// visible; the API still requires one rather than NULL.
+	const Pixel_8 backColor[4] = {0, 0, 0, 0};
+	vImage_Error err = vImageRotate90_ARGB8888(&in, &out,
+	                                           turzxVImageRotation(quarterTurns),
+	                                           backColor, kvImageNoFlags);
+
+	CVPixelBufferUnlockBaseAddress(dst, 0);
+	CVPixelBufferUnlockBaseAddress(src, kCVPixelBufferLock_ReadOnly);
+
+	if (err != kvImageNoError) {
+		CVPixelBufferRelease(dst);
+		return NULL;
+	}
+	return dst;
+}
+
 // --- ScreenCaptureKit output ----------------------------------------------
 
 @interface TURZXStreamOutput : NSObject <SCStreamOutput, SCStreamDelegate>
@@ -154,9 +234,21 @@ static void encodeCallback(void *refcon, void *frameRefcon, OSStatus status,
 	// still valid, so they are encoded like any other.
 	self.frameCount++;
 
+	// Rotation has to happen here, before encoding: once a frame is H.264 there
+	// are no pixels left to turn.
+	CVPixelBufferRef rotated = NULL;
+	if (gQuarterTurns != 0) {
+		rotated = turzxRotatePixelBuffer(pixelBuffer, gQuarterTurns);
+	}
+	if (rotated != NULL) {
+		pixelBuffer = rotated;
+	}
+
 	CMTime pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer);
 	VTCompressionSessionEncodeFrame(self.session, pixelBuffer, pts, kCMTimeInvalid,
 	                                NULL, NULL, NULL);
+
+	if (rotated != NULL) CVPixelBufferRelease(rotated);
 }
 
 - (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
@@ -189,12 +281,13 @@ static void ensureAppKitInitialised(void) {
 	});
 }
 
-int turzx_capture_start(uint32_t displayID, int width, int height, int fps, int bitrate) {
+int turzx_capture_start(uint32_t displayID, int width, int height, int encodeWidth, int encodeHeight, int quarterTurns, int fps, int bitrate) {
 	@autoreleasepool {
 		if (gRunning) return TURZX_E_OK;
 		gLastError = TURZX_E_OK;
 
 		ensureAppKitInitialised();
+		gQuarterTurns = quarterTurns;
 
 		if (gQueue == NULL) {
 			gQueue = dispatch_queue_create("turzx.capture", DISPATCH_QUEUE_SERIAL);
@@ -237,7 +330,7 @@ int turzx_capture_start(uint32_t displayID, int width, int height, int fps, int 
 		// Build the encoder first so the stream's first frame has somewhere to go.
 		NSDictionary *spec = @{ (id)kVTCompressionPropertyKey_RealTime : @YES };
 		OSStatus st = VTCompressionSessionCreate(kCFAllocatorDefault,
-		                                        (int32_t)width, (int32_t)height,
+		                                        (int32_t)encodeWidth, (int32_t)encodeHeight,
 		                                        kCMVideoCodecType_H264,
 		                                        (__bridge CFDictionaryRef)spec,
 		                                        NULL /* sourceImageBufferAttributes */,
