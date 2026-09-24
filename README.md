@@ -20,7 +20,7 @@ project talks to the panel directly over USB from userspace.
 | macOS | Working |
 | Ubuntu 24.04 | Code is platform-neutral; **not yet verified on real hardware** |
 | Extended desktop (macOS) | Working, verified against hardware |
-| Extended desktop (Linux) | Not yet implemented — the CLI does not build on Linux yet |
+| Extended desktop (Linux) | Implemented for X11, **not yet run on real hardware** |
 | Playback of files stored on the panel | Protocol implemented, blocked on hardware — needs an SD card |
 
 Verified on a TURZX 5.2" panel (`1cbe:0050`, 720×1280) from macOS 26.6.2 on
@@ -79,6 +79,50 @@ turzx monitor --bitrate 24000   # more bits for sharper motion
 Images are scaled to the panel's native resolution and letterboxed with black;
 the device does not scale. All image payloads are transmitted in the panel's
 native **portrait** orientation.
+
+## Extended desktop
+
+`turzx monitor` creates a display the size of the panel, captures it, encodes
+H.264 and streams it, so you can drag windows onto the panel as a real second
+screen.
+
+```sh
+turzx monitor                    # 720x1280 at 30 fps, 16 Mbit/s
+turzx monitor --bitrate 24000    # more bits, for sharper motion
+turzx monitor --fps 24           # fewer frames, for a slower USB link
+```
+
+**macOS** needs no setup beyond Screen Recording permission, which macOS will
+prompt for on first run. The virtual display is created by this program using
+the private `CGVirtualDisplay` API inside CoreGraphics — the same mechanism
+DisplayLink, BetterDisplay and DeskPad use. It is undocumented, so it cannot
+ship on the App Store and a macOS update may break it.
+
+**Linux** requires an **X11 session** (log in with "Ubuntu on Xorg"). Wayland
+is not supported: its compositors provide no way to create a virtual output,
+and screen capture goes through a portal rather than the X screen.
+
+A userspace program cannot create a display on Linux, so one must exist first.
+Either install evdi:
+
+```sh
+sudo apt install evdi-dkms && sudo modprobe evdi
+```
+
+or add a dummy device to `xorg.conf`:
+
+```
+Section "Device"
+  Identifier "Virtual"
+  Driver     "dummy"
+  VideoRam   32768
+  Option     "ConnectedMonitor" "DP-1"
+EndSection
+```
+
+Then run `turzx monitor`. It finds the output automatically, preferring one
+already sized to the panel; if several are present, pick one with
+`--output <name>` (names come from `xrandr --query`).
 
 ## How it works
 

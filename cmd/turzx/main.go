@@ -39,7 +39,7 @@ Usage:
                                  stream an MP4 or raw Annex-B H.264 file
   turzx brightness <0-100>       set the backlight
   turzx rotate <0-3>             set the display rotation
-  turzx monitor [--fps 30] [--bitrate 16000]
+  turzx monitor [--fps 30] [--bitrate 16000] [--output NAME]
                                  use the panel as an extended desktop
   turzx dashboard [--interval 1s]
                                  live system monitor on the panel
@@ -327,6 +327,9 @@ func streamOnce(dev *usb.Device, f *os.File, size int64, isMP4 bool, path string
 type monitorOpts struct {
 	fps     int
 	bitrate int
+	// output names a specific display output, for platforms where the virtual
+	// display has to be configured ahead of time rather than created here.
+	output string
 }
 
 // parseMonitorArgs accepts: [--fps N] [--bitrate KBPS]
@@ -354,6 +357,12 @@ func parseMonitorArgs(args []string) (monitorOpts, error) {
 				return opts, fmt.Errorf("invalid --bitrate %q: expected kbit/s, at least 100", args[i])
 			}
 			opts.bitrate = n * 1000
+		case arg == "--output":
+			if i+1 >= len(args) {
+				return opts, errors.New("--output needs a value, e.g. DUMMY0")
+			}
+			i++
+			opts.output = args[i]
 		case strings.HasPrefix(arg, "-"):
 			return opts, fmt.Errorf("unknown flag %q", arg)
 		default:
@@ -363,24 +372,43 @@ func parseMonitorArgs(args []string) (monitorOpts, error) {
 	return opts, nil
 }
 
+// displayLabel names a virtual display for logging, using whichever identifier
+// the platform actually provides.
+func displayLabel(d *vdisplay.Display) string {
+	if name := d.Name(); name != "" {
+		return name
+	}
+	return fmt.Sprintf("%d", d.ID())
+}
+
 // cmdMonitor makes the panel a real extended desktop: it creates a virtual
 // display, captures it, and streams the encoded result to the panel.
 func cmdMonitor(ctx context.Context, dev *usb.Device, opts monitorOpts) error {
 	w, h := dev.Portrait()
 
-	display, err := vdisplay.Create("TURZX", w, h, 60)
+	display, err := vdisplay.Create(vdisplay.Options{
+		Name:      "TURZX",
+		Output:    opts.output,
+		Width:     w,
+		Height:    h,
+		RefreshHz: 60,
+	})
 	if err != nil {
-		return fmt.Errorf("create virtual display: %w", err)
+		return err
 	}
 	defer display.Close()
-	fmt.Printf("created virtual display %d at %dx%d\n", display.ID(), w, h)
+	fmt.Printf("using virtual display %s at %dx%d\n", displayLabel(display), w, h)
 
-	// The WindowServer publishes the new display asynchronously; asking
-	// ScreenCaptureKit to enumerate it too early finds nothing.
-	time.Sleep(1500 * time.Millisecond)
+	// On macOS the WindowServer publishes a new display asynchronously, and
+	// asking ScreenCaptureKit to enumerate it too early finds nothing. On
+	// Linux the output already exists and there is nothing to wait for.
+	time.Sleep(vdisplay.SettleDelay)
 
+	originX, originY := display.Origin()
 	session, err := capture.Start(capture.Options{
 		DisplayID: display.ID(),
+		X:         originX,
+		Y:         originY,
 		Width:     w,
 		Height:    h,
 		FPS:       opts.fps,

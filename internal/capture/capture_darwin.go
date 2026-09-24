@@ -1,10 +1,5 @@
 //go:build darwin
 
-// Package capture turns a display into an H.264 Annex-B stream.
-//
-// On macOS this is ScreenCaptureKit feeding VideoToolbox, both hardware
-// accelerated. On Linux it shells out to ffmpeg, which is the pragmatic choice
-// there because it also handles the platform's display capture.
 package capture
 
 /*
@@ -23,23 +18,10 @@ void turzx_capture_stop(void);
 import "C"
 
 import (
-	"errors"
 	"fmt"
 	"time"
 	"unsafe"
 )
-
-// Options configures a capture session.
-type Options struct {
-	// DisplayID is the CGDirectDisplayID to capture.
-	DisplayID uint32
-	// Width and Height are the capture resolution in pixels.
-	Width, Height int
-	// FPS is the requested frame rate.
-	FPS int
-	// Bitrate is the target H.264 bitrate in bits per second.
-	Bitrate int
-}
 
 // frameBufferSize bounds a single encoded frame. Keyframes of a 720x1280
 // desktop comfortably fit; anything larger is a sign of a misconfigured
@@ -55,14 +37,9 @@ type Session struct {
 // Start begins capturing. It blocks until the stream is running, so a
 // permission problem surfaces here rather than as a silent black screen.
 func Start(opts Options) (*Session, error) {
-	if opts.Width <= 0 || opts.Height <= 0 {
-		return nil, fmt.Errorf("capture: invalid size %dx%d", opts.Width, opts.Height)
-	}
-	if opts.FPS <= 0 {
-		opts.FPS = 30
-	}
-	if opts.Bitrate <= 0 {
-		opts.Bitrate = 4_000_000
+	opts, err := opts.normalise()
+	if err != nil {
+		return nil, err
 	}
 
 	rc := C.turzx_capture_start(C.uint32_t(opts.DisplayID), C.int(opts.Width),
@@ -130,6 +107,3 @@ func describeError(code int) string {
 		return fmt.Sprintf("unknown error %d", code)
 	}
 }
-
-// ErrUnsupported reports a platform without a capture backend.
-var ErrUnsupported = errors.New("capture: unsupported platform")

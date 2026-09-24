@@ -1,15 +1,5 @@
 //go:build darwin
 
-// Package vdisplay creates a real virtual display so the panel can act as an
-// extended desktop rather than just a picture frame.
-//
-// The mechanisms differ per platform and both are unusual:
-//
-//   - macOS has no public API for adding a display. It uses the private
-//     CGVirtualDisplay classes inside CoreGraphics, the same route DisplayLink,
-//     BetterDisplay and DeskPad take. See vdisplay_darwin.m.
-//   - Linux uses an X11 virtual output (evdi or the dummy driver) and captures
-//     it with a helper process. See vdisplay_linux.go.
 package vdisplay
 
 /*
@@ -28,29 +18,34 @@ import "C"
 
 import (
 	"fmt"
+	"time"
 	"unsafe"
 )
 
-// Display is a created virtual display.
-type Display struct {
-	id     uint32
-	width  int
-	height int
-}
-
-// Create adds a virtual display of the given pixel size and returns it.
+// Create adds a virtual display and returns it.
 //
 // The caller must keep the process alive and call Close when finished; macOS
 // removes the display as soon as the owning process exits.
-func Create(name string, width, height, refreshHz int) (*Display, error) {
-	cName := C.CString(name)
+func Create(opts Options) (*Display, error) {
+	opts, err := opts.normalise()
+	if err != nil {
+		return nil, err
+	}
+
+	cName := C.CString(opts.Name)
 	defer C.free(unsafe.Pointer(cName))
 
 	var id C.uint32_t
-	if rc := C.turzx_vd_create(cName, C.int(width), C.int(height), C.int(refreshHz), &id); rc != 0 {
+	rc := C.turzx_vd_create(cName, C.int(opts.Width), C.int(opts.Height), C.int(opts.RefreshHz), &id)
+	if rc != 0 {
 		return nil, fmt.Errorf("create virtual display: %s", createError(rc))
 	}
-	return &Display{id: uint32(id), width: width, height: height}, nil
+	return &Display{
+		id:     uint32(id),
+		name:   opts.Name,
+		width:  opts.Width,
+		height: opts.Height,
+	}, nil
 }
 
 // createError explains the failure codes returned from Objective-C, which
@@ -71,14 +66,12 @@ func createError(rc C.int) string {
 	}
 }
 
-// ID returns the CGDirectDisplayID, which is what capture APIs expect.
-func (d *Display) ID() uint32 { return d.id }
-
-// Size returns the display's pixel dimensions.
-func (d *Display) Size() (int, int) { return d.width, d.height }
-
 // Close removes the virtual display.
 func (d *Display) Close() error {
 	C.turzx_vd_destroy()
 	return nil
 }
+
+// SettleDelay is how long to wait after creating the display before capturing
+// it. macOS publishes a new display asynchronously, so capture started too early finds nothing.
+const SettleDelay = 1500 * time.Millisecond
