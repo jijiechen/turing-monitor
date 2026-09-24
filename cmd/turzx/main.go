@@ -38,7 +38,7 @@ Usage:
                                  stream an MP4 or raw Annex-B H.264 file
   turzx brightness <0-100>       set the backlight
   turzx rotate <0-3>             set the display rotation
-  turzx monitor [--fps 30] [--bitrate 16000] [--output NAME]
+  turzx monitor [--fps 30] [--bitrate 16000] [--output NAME] [--size WxH]
                                  use the panel as an extended desktop
   turzx dashboard [--interval 1s]
                                  live system monitor on the panel
@@ -82,6 +82,24 @@ func run(args []string) error {
 	}
 
 	cmd, rest := args[0], args[1:]
+
+	// These commands look after the panel themselves: they have to survive it
+	// being unplugged and plugged back in, so they open and reopen the device
+	// rather than borrowing one opened here.
+	switch cmd {
+	case "monitor":
+		opts, err := parseMonitorArgs(rest)
+		if err != nil {
+			return err
+		}
+		return cmdMonitor(context.Background(), opts)
+	case "dashboard":
+		opts, err := parseDashboardArgs(rest)
+		if err != nil {
+			return err
+		}
+		return cmdDashboard(context.Background(), opts)
+	}
 
 	// `info` deliberately does not claim the panel, so it works even while a
 	// stream is running.
@@ -144,31 +162,6 @@ func run(args []string) error {
 			return errors.New("usage: turzx extract <input.mp4> <output.h264>")
 		}
 		return cmdExtract(rest[0], rest[1])
-
-	case "monitor":
-		opts, err := parseMonitorArgs(rest)
-		if err != nil {
-			return err
-		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		return cmdMonitor(ctx, dev, opts)
-
-	case "dashboard":
-		interval, err := parseInterval(rest)
-		if err != nil {
-			return err
-		}
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-
-		opts := dashboard.DefaultOptions()
-		opts.Interval = interval
-		if verbose {
-			opts.Log = os.Stdout
-		}
-		fmt.Printf("dashboard on %s, refreshing every %s — press Ctrl-C to stop\n", dev.Model(), interval)
-		return dashboard.Run(ctx, dev, opts)
 
 	case "storage":
 		s, err := dev.StorageInfo()
@@ -329,11 +322,14 @@ type monitorOpts struct {
 	// output names a specific display output, for platforms where the virtual
 	// display has to be configured ahead of time rather than created here.
 	output string
+	// width and height size the virtual display when no panel is attached to
+	// ask. A service may well start before the panel is plugged in.
+	width, height int
 }
 
 // parseMonitorArgs accepts: [--fps N] [--bitrate KBPS]
 func parseMonitorArgs(args []string) (monitorOpts, error) {
-	opts := monitorOpts{fps: 30, bitrate: 16_000_000}
+	opts := monitorOpts{fps: 30, bitrate: 16_000_000, width: 720, height: 1280}
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
 		case arg == "--fps":
@@ -356,6 +352,16 @@ func parseMonitorArgs(args []string) (monitorOpts, error) {
 				return opts, fmt.Errorf("invalid --bitrate %q: expected kbit/s, at least 100", args[i])
 			}
 			opts.bitrate = n * 1000
+		case arg == "--size":
+			if i+1 >= len(args) {
+				return opts, errors.New("--size needs a value like 720x1280")
+			}
+			i++
+			w, h, err := parseSize(args[i])
+			if err != nil {
+				return opts, err
+			}
+			opts.width, opts.height = w, h
 		case arg == "--output":
 			if i+1 >= len(args) {
 				return opts, errors.New("--output needs a value, e.g. DUMMY0")
@@ -371,6 +377,20 @@ func parseMonitorArgs(args []string) (monitorOpts, error) {
 	return opts, nil
 }
 
+// parseSize reads a WxH dimension pair.
+func parseSize(s string) (int, int, error) {
+	ws, hs, ok := strings.Cut(s, "x")
+	if !ok {
+		return 0, 0, fmt.Errorf("invalid --size %q: expected WxH, e.g. 720x1280", s)
+	}
+	w, err1 := strconv.Atoi(strings.TrimSpace(ws))
+	h, err2 := strconv.Atoi(strings.TrimSpace(hs))
+	if err1 != nil || err2 != nil || w <= 0 || h <= 0 {
+		return 0, 0, fmt.Errorf("invalid --size %q: expected WxH, e.g. 720x1280", s)
+	}
+	return w, h, nil
+}
+
 // displayLabel names a virtual display for logging, using whichever identifier
 // the platform actually provides.
 func displayLabel(d *vdisplay.Display) string {
@@ -382,8 +402,27 @@ func displayLabel(d *vdisplay.Display) string {
 
 // cmdMonitor makes the panel a real extended desktop: it creates a virtual
 // display, captures it, and streams the encoded result to the panel.
-func cmdMonitor(ctx context.Context, dev *usb.Device, opts monitorOpts) error {
-	w, h := dev.Portrait()
+//
+// The display and the capture are established once and kept for the life of
+// the process. Only the USB link is torn down and rebuilt when the panel is
+// unplugged and plugged back in: on macOS a recreated virtual display loses
+// its position in the arrangement and takes the windows that were on it with
+// it, so a display that blinks out every time someone bumps the cable would be
+// worse than useless.
+//
+// Frames produced while no panel is attached are simply discarded.
+func cmdMonitor(ctx context.Context, opts monitorOpts) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	w, h := opts.width, opts.height
+
+	// If a panel is attached, prefer the resolution it reports over the
+	// configured default. Discover does not claim the interface, so this is
+	// safe to do before the supervised session takes the device.
+	if found, err := usb.Discover(); err == nil && len(found) > 0 {
+		w, h = found[0].Model.Portrait()
+	}
 
 	display, err := vdisplay.Create(vdisplay.Options{
 		Name:      "TURZX",
@@ -396,7 +435,7 @@ func cmdMonitor(ctx context.Context, dev *usb.Device, opts monitorOpts) error {
 		return err
 	}
 	defer display.Close()
-	fmt.Printf("using virtual display %s at %dx%d\n", displayLabel(display), w, h)
+	fmt.Printf("virtual display %s at %dx%d\n", displayLabel(display), w, h)
 
 	// On macOS the WindowServer publishes a new display asynchronously, and
 	// asking ScreenCaptureKit to enumerate it too early finds nothing. On
@@ -417,25 +456,35 @@ func cmdMonitor(ctx context.Context, dev *usb.Device, opts monitorOpts) error {
 		return err
 	}
 	defer session.Close()
+	fmt.Printf("capturing %dx%d at %d fps, %d kbit/s\n", w, h, opts.fps, opts.bitrate/1000)
+
+	return usb.Supervise(ctx, os.Stdout, func(dev *usb.Device) error {
+		return streamToPanel(ctx, dev, session, opts)
+	})
+}
+
+// streamToPanel runs one streaming session: it primes the panel and feeds it
+// frames until the panel goes away or the context is cancelled.
+//
+// The panel resets when it is unplugged, so the prelude has to be sent again on
+// every reconnect; that is why it lives here rather than alongside the capture
+// setup.
+func streamToPanel(ctx context.Context, dev *usb.Device, session *capture.Session, opts monitorOpts) error {
+	if err := dev.BeginPlayback(opts.fps); err != nil {
+		return err
+	}
+	fmt.Printf("streaming to %s\n", dev.Model())
 
 	frames, bytes := 0, 0
 	start := time.Now()
 	lastReport := start
 
-	if err := dev.BeginPlayback(opts.fps); err != nil {
-		return err
-	}
-	fmt.Printf("streaming %dx%d @ %d fps, %d kbit/s to %s\n",
-		w, h, opts.fps, opts.bitrate/1000, dev.Model())
-
 	for {
-		select {
-		case <-ctx.Done():
-			fmt.Printf("\nstopped after %d frames, %s (%.1f fps, %.0f KB/s)\n",
-				frames, humanBytes(int64(bytes)), float64(frames)/time.Since(start).Seconds(),
-				float64(bytes)/1024/time.Since(start).Seconds())
-			return dev.StopStream()
-		default:
+		if ctx.Err() != nil {
+			// End the stream properly so the panel is not left mid-session.
+			_ = dev.StopStream()
+			fmt.Printf("stopped after %d frames, %s\n", frames, humanBytes(int64(bytes)))
+			return nil
 		}
 
 		frame, err := session.Next()
@@ -463,31 +512,57 @@ func cmdMonitor(ctx context.Context, dev *usb.Device, opts monitorOpts) error {
 	}
 }
 
-// parseInterval accepts: [--interval <duration>]
-func parseInterval(args []string) (time.Duration, error) {
-	interval := time.Second
+// cmdDashboard runs the system monitor on the panel, surviving the panel being
+// unplugged and plugged back in.
+func cmdDashboard(ctx context.Context, opts dashboardOpts) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	run := dashboard.DefaultOptions()
+	run.Interval = opts.interval
+	run.Log = opts.log
+
+	fmt.Printf("dashboard refreshing every %s — press Ctrl-C to stop\n", opts.interval)
+
+	return usb.Supervise(ctx, os.Stdout, func(dev *usb.Device) error {
+		return dashboard.Run(ctx, dev, run)
+	})
+}
+
+// dashboardOpts holds the parsed flags for the dashboard subcommand.
+type dashboardOpts struct {
+	interval time.Duration
+	log      io.Writer
+}
+
+// parseDashboardArgs accepts: [--interval <duration>]
+func parseDashboardArgs(args []string) (dashboardOpts, error) {
+	opts := dashboardOpts{interval: time.Second}
+	if verbose {
+		opts.log = os.Stdout
+	}
 	for i := 0; i < len(args); i++ {
 		switch arg := args[i]; {
 		case arg == "--interval":
 			if i+1 >= len(args) {
-				return 0, errors.New("--interval needs a value, e.g. 500ms or 2s")
+				return opts, errors.New("--interval needs a value, e.g. 500ms or 2s")
 			}
 			i++
 			d, err := time.ParseDuration(args[i])
 			if err != nil {
-				return 0, fmt.Errorf("invalid --interval %q: %w", args[i], err)
+				return opts, fmt.Errorf("invalid --interval %q: %w", args[i], err)
 			}
 			if d < 100*time.Millisecond {
-				return 0, errors.New("--interval must be at least 100ms")
+				return opts, errors.New("--interval must be at least 100ms")
 			}
-			interval = d
+			opts.interval = d
 		case strings.HasPrefix(arg, "-"):
-			return 0, fmt.Errorf("unknown flag %q", arg)
+			return opts, fmt.Errorf("unknown flag %q", arg)
 		default:
-			return 0, fmt.Errorf("unexpected argument %q", arg)
+			return opts, fmt.Errorf("unexpected argument %q", arg)
 		}
 	}
-	return interval, nil
+	return opts, nil
 }
 
 // cmdExtract converts an MP4 to a raw Annex-B H.264 file, so the stream can be

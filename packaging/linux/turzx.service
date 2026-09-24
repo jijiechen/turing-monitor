@@ -1,0 +1,33 @@
+# systemd user unit for running turzx unattended.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp packaging/linux/turzx.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now turzx
+#   journalctl --user -u turzx -f        # watch it
+#
+# Change ExecStart to `turzx monitor` to run the extended desktop instead.
+# That mode needs an X11 session; see the README.
+
+[Unit]
+Description=TURZX USB display
+# Only start once a graphical session exists, because `monitor` needs a
+# display to capture. `dashboard` does not, but starting later costs nothing.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/turzx dashboard
+# The program copes with the panel being unplugged and plugged back in by
+# itself. This only covers it dying outright, so a tight restart loop would
+# mean a real problem rather than a missing panel.
+Restart=always
+RestartSec=5
+# Keep the log readable: the program already rate-limits its own messages.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

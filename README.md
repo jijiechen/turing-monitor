@@ -203,6 +203,44 @@ EndSection
 `--bitrate`；如果卡顿，调低 `--fps`。另外注意：画面静止时几乎没有数据流量（屏幕
 会一直显示最后一帧），所以帧率在没东西动的时候偏低是正常的。
 
+## 后台运行（无人值守）
+
+`dashboard` 和 `monitor` 都会**自己处理屏幕被拔掉**的情况：拔掉后不会退出，而是
+进入等待；插回来后自动重连，并重新执行推流前置序列（设备复位了，必须重来一遍）。
+
+所以可以放心交给服务管理器长期运行，不需要人工干预。两个平台都提供了模板。
+
+**Linux（systemd user 服务）**
+
+```sh
+mkdir -p ~/.config/systemd/user
+cp packaging/linux/turzx.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now turzx
+journalctl --user -u turzx -f        # 看日志
+```
+
+**macOS（LaunchAgent）**
+
+```sh
+cp packaging/macos/com.jijiechen.turzx.plist ~/Library/LaunchAgents/
+# 先把 plist 里的二进制路径改成实际位置
+launchctl load ~/Library/LaunchAgents/com.jijiechen.turzx.plist
+tail -f /tmp/turzx.log
+```
+
+两个模板默认运行 `dashboard`，改成 `monitor` 即可切换为扩展桌面。
+
+**几个要点：**
+
+- 程序内部的 `Restart` 和 `KeepAlive` 只用于**真正的崩溃**。屏幕缺失不算故障，程序
+  自己会等，所以不会出现崩溃重启的刷屏循环。
+- 等待期间每 60 秒才输出一次提示，日志不会被刷爆。
+- **macOS 上尤其不能依赖「崩溃重启」**：虚拟显示器由进程持有，进程一死屏幕就消失，
+  重启后 macOS 会重排窗口和显示器排列。程序内重连正是为了避免这一点。
+- 首次运行 `monitor` 需要授予「屏幕录制」权限；用 LaunchAgent 启动时，建议先在终端
+  手动跑一次完成授权。
+
 ## 常见问题
 
 **`no TURZX display found`**

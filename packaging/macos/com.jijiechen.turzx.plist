@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent for running turzx unattended on macOS.
+
+  Install:
+    cp packaging/macos/com.jijiechen.turzx.plist ~/Library/LaunchAgents/
+    # edit the two paths below to match where you put the binary
+    launchctl load ~/Library/LaunchAgents/com.jijiechen.turzx.plist
+    tail -f /tmp/turzx.log
+
+  To stop:
+    launchctl unload ~/Library/LaunchAgents/com.jijiechen.turzx.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.jijiechen.turzx</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/turzx</string>
+		<string>dashboard</string>
+	</array>
+
+	<key>RunAtLoad</key>
+	<true/>
+
+	<!-- The program handles the panel being unplugged itself, so this is only
+	     for a genuine crash. -->
+	<key>KeepAlive</key>
+	<true/>
+
+	<!-- Required. The virtual display talks to WindowServer, which only
+	     exists in a GUI session, so this must not run as a system daemon. -->
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+
+	<key>StandardOutPath</key>
+	<string>/tmp/turzx.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/turzx.err</string>
+</dict>
+</plist>
