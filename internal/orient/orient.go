@@ -82,6 +82,24 @@ func All() []Orientation {
 	return []Orientation{Portrait, Landscape, PortraitInverted, LandscapeInverted}
 }
 
+// Mounting describes the physical arrangement in terms a user can act on,
+// rather than naming a rotation direction that has to be worked out. Verified
+// against hardware: with a panel lying in its native orientation, content sent
+// as Landscape puts its top edge on the panel's right.
+func (o Orientation) Mounting() string {
+	switch o {
+	case Portrait:
+		return "panel as it comes"
+	case Landscape:
+		return "panel turned 90\u00b0 anticlockwise, right edge up"
+	case PortraitInverted:
+		return "panel upside down"
+	case LandscapeInverted:
+		return "panel turned 90\u00b0 clockwise, left edge up"
+	}
+	return "unknown"
+}
+
 // ContentSize returns the size content should be drawn at, given the panel's
 // native framebuffer size.
 func (o Orientation) ContentSize(nativeW, nativeH int) (int, int) {

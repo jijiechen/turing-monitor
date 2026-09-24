@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 )
 
@@ -271,6 +272,14 @@ func TestToNativePlacesContentTopOnTheRightEdge(t *testing.T) {
 		if counts[tc.wantEdge] == 0 {
 			t.Errorf("%s: content's top row did not land on the native %s edge (found: %v)",
 				tc.o, tc.wantEdge, counts)
+		}
+
+		// The help text exists so a user does not have to try both landscape
+		// options to find the right one, which only holds if it keeps naming
+		// the edge the content actually lands on.
+		if !strings.Contains(tc.o.Mounting(), tc.wantEdge+" edge up") && tc.wantEdge != "top" && tc.wantEdge != "bottom" {
+			t.Errorf("%s: Mounting() = %q, but the top row lands on the %s edge",
+				tc.o, tc.o.Mounting(), tc.wantEdge)
 		}
 	}
 }

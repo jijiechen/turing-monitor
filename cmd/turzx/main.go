@@ -36,8 +36,11 @@ Usage:
   turzx clear                    blank the screen
   turzx image [--orientation NAME] <file>
                                  display a JPEG or PNG, scaled to fit
-                                 NAME: portrait | landscape | portrait-inverted |
-                                       landscape-inverted
+                                 NAME describes how the panel is mounted:
+                                   portrait            panel as it comes (default)
+                                   landscape           turned 90° anticlockwise, right edge up
+                                   portrait-inverted   panel upside down
+                                   landscape-inverted  turned 90° clockwise, left edge up
   turzx video [--loop] [--fps N] <file>
                                  stream an MP4 or raw Annex-B H.264 file
   turzx brightness <0-100>       set the backlight
