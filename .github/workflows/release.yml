@@ -1,0 +1,98 @@
+name: release
+
+# Builds a binary per platform and attaches them to a GitHub release, so people
+# can use this without installing Go.
+#
+# Push a tag to trigger it:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# Note on cgo: the USB layer wraps libusb through cgo, so each target has to be
+# built on a matching runner rather than cross-compiled. The darwin/amd64 build
+# is the one exception -- Go passes the right -arch to clang, so an arm64 runner
+# can produce it.
+#
+# The resulting binaries link libusb dynamically, so macOS users still need
+# `brew install libusb` and Linux users `libusb-1.0-0`. That is documented in
+# the README.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Keep going if one target fails; a missing arm64 build should not cost
+      # the other three.
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon
+            goarch: arm64
+            artifact: turzx-darwin-arm64
+          - os: macos-14
+            goarch: amd64
+            artifact: turzx-darwin-amd64
+          - os: ubuntu-24.04
+            goarch: amd64
+            artifact: turzx-linux-amd64
+          - os: ubuntu-24.04-arm
+            goarch: arm64
+            artifact: turzx-linux-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Install libusb (macOS)
+        if: runner.os == 'macOS'
+        run: brew install libusb
+
+      - name: Install libusb (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libusb-1.0-0-dev
+
+      - name: Build
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          # Homebrew's libusb is not on the default pkg-config path.
+          PKG_CONFIG_PATH: ${{ runner.os == 'macOS' && '/opt/homebrew/lib/pkgconfig' || '' }}
+        run: |
+          go build -trimpath -ldflags "-s -w" -o ${{ matrix.artifact }} ./cmd/turzx
+
+      - name: Verify the binary runs
+        # A build that links but cannot start is the failure mode worth
+        # catching here, since the linked libusb is the risky part.
+        run: ./${{ matrix.artifact }} --help
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact }}
+          generate_release_notes: true
+          body: |
+            Prebuilt binaries are attached below. They link libusb
+            dynamically, so install it first:
+
+              macOS          brew install libusb
+              Debian/Ubuntu  sudo apt install libusb-1.0-0
+
+            macOS builds are unsigned. The first run needs right-click → Open,
+            or: `xattr -d com.apple.quarantine ./turzx-darwin-arm64`
+
+            On Linux, install the udev rule from `packaging/linux/` so the
+            panel works without root.
