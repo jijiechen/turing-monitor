@@ -134,17 +134,16 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
-            Prebuilt binaries are attached below. They link libusb
-            dynamically, so install it first:
+            预编译二进制见下方附件。它们动态链接 libusb，所以请先安装：
 
               macOS          brew install libusb
               Debian/Ubuntu  sudo apt install libusb-1.0-0
 
-            macOS builds are unsigned. The first run needs right-click → Open,
-            or: `xattr -d com.apple.quarantine ./turzx-darwin-arm64`
+            macOS 版本未签名，首次运行需要「右键 → 打开」，或者：
 
-            On Linux, install the udev rule from `packaging/linux/` so the
-            panel works without root.
+              xattr -d com.apple.quarantine ./turzx-darwin-arm64
 
-            Note: the Linux support has not yet been verified against real
-            hardware. See the README for the current state.
+            Linux 上请安装 `packaging/linux/` 里的 udev 规则，否则每次运行都需要
+            root 权限。
+
+            注意：Linux 相关功能尚未在真机上验证，当前状态见 README。

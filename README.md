@@ -1,37 +1,36 @@
 # turing-monitor
 
-Drive **TURZX / 图灵智显** USB displays from **macOS** and **Linux** — no kernel
-driver, no kext signing, no DKMS.
+在 **macOS** 和 **Linux** 上驱动 **图灵智显 / TURZX** USB 小屏幕 —— 不需要内核
+驱动、不需要签名、不需要 DKMS。
 
-The vendor only ships Windows software, and its driver targets a USB identity
-(`1A86:AD10..AD13`) that a panel in its normal "LCD mode" does not present. So
-on macOS and Linux the panel is simply unrecognised. This project talks to it
-directly from userspace, which works on both systems with nothing installed
-beyond libusb.
+厂商只提供了 Windows 软件，而且它的驱动针对的是 USB 标识
+`1A86:AD10..AD13` —— 而屏幕处于正常的「LCD 模式」时并不会呈现这个标识。所以
+在 macOS 和 Linux 上它完全不被识别。本项目直接从用户态与屏幕通信，两端都只
+需要 libusb，无需安装其他东西。
 
-What you can do with it:
+你可以用它做这些事：
 
-- **Show an image** — any JPEG or PNG, scaled to the panel
-- **Play a video** — MP4 or raw H.264
-- **Run a system dashboard** — CPU, memory, network, disk and temperatures
-- **Use it as a second monitor** — drag real windows onto it
+- **显示图片** —— 任意 JPEG 或 PNG，自动缩放到屏幕尺寸
+- **播放视频** —— MP4 或裸 H.264
+- **系统监控副屏** —— CPU、内存、网络、磁盘、温度
+- **当作第二显示器** —— 可以把真实窗口拖上去
 
-## Supported displays
+## 支持的型号
 
-| USB ID | Model | Resolution |
+| USB ID | 型号 | 分辨率 |
 |---|---|---|
-| `1cbe:0050` | Turing 5.2" | 720×1280 |
-| `1cbe:0028` | Turing 2.8" round | 480×480 |
-| `1cbe:0046` | Turing 4.6" | 320×960 |
-| `1cbe:0080` | Turing 8.0" | 800×1280 |
-| `1cbe:0088` | Turing 8.8" | 480×1920 |
-| `1cbe:0092` | Turing 9.2" | 462×1920 |
-| `1cbe:0123` | Turing 12.3" | 720×1920 |
+| `1cbe:0050` | 图灵 5.2" | 720×1280 |
+| `1cbe:0028` | 图灵 2.8" 圆形 | 480×480 |
+| `1cbe:0046` | 图灵 4.6" | 320×960 |
+| `1cbe:0080` | 图灵 8.0" | 800×1280 |
+| `1cbe:0088` | 图灵 8.8" | 480×1920 |
+| `1cbe:0092` | 图灵 9.2" | 462×1920 |
+| `1cbe:0123` | 图灵 12.3" | 720×1920 |
 
-Run `turzx info` to see what your panel reports. If it is not listed, the model
-table in `internal/proto/model.go` is one line to extend.
+运行 `turzx info` 可以看到你的屏幕报出的型号。如果没列出，在
+`internal/proto/model.go` 的型号表里加一行即可。
 
-## Install
+## 安装
 
 ### macOS
 
@@ -42,16 +41,15 @@ cd turing-monitor
 PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig" go build -o turzx ./cmd/turzx
 ```
 
-Requires Go 1.24 or newer. If you have Go, this is shorter than cloning:
+需要 Go 1.24 或更高版本。如果你已经装了 Go，这样比 clone 更省事：
 
 ```sh
 PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig" \
   go install github.com/jijiechen/turing-monitor/cmd/turzx@latest
 ```
 
-If you would rather not install Go, download a prebuilt binary from
-[Releases](../../releases) instead — macOS builds are unsigned, so the first
-run needs **right-click → Open**, or:
+如果你不想装 Go，可以直接从 [Releases](../../releases) 下载预编译二进制。macOS
+版本未签名，首次运行需要**右键 → 打开**，或者：
 
 ```sh
 xattr -d com.apple.quarantine ./turzx
@@ -61,123 +59,116 @@ xattr -d com.apple.quarantine ./turzx
 
 ```sh
 sudo apt install libusb-1.0-0-dev
-sudo apt install ffmpeg          # only needed for `turzx monitor`
+sudo apt install ffmpeg          # 只有 turzx monitor 需要
 git clone https://github.com/jijiechen/turing-monitor
 cd turing-monitor
 go build -o turzx ./cmd/turzx
 ```
 
-Then let your user talk to the panel without `sudo`:
+然后让自己的用户无需 `sudo` 就能访问屏幕：
 
 ```sh
 sudo cp packaging/linux/99-turzx.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Unplug and replug the panel. Without this step every command fails with
-`libusb: bad access`.
+拔掉屏幕再插上。**跳过这一步，所有命令都会报 `libusb: bad access`。**
 
-## Usage
+## 使用
 
-Check the panel is found first:
+先确认屏幕能被找到：
 
 ```sh
 ./turzx info
 # Turing 5.2" (720x1280)  serial 0123456789abcdef  bus 2 addr 1
 ```
 
-### Show an image
+### 显示图片
 
 ```sh
 ./turzx image ~/Pictures/photo.jpg
 ```
 
-Any size is accepted: the image is scaled to fit the panel and letterboxed with
-black. The panel does not scale anything itself, so the host does all fitting.
+任意尺寸都可以：图片会被缩放到适合屏幕的大小，多出来的部分用黑边补齐。屏幕
+自身不做任何缩放，所有适配都由主机完成。
 
-### Play a video
+### 播放视频
 
 ```sh
-./turzx video ~/Movies/clip.mp4          # MP4 is demuxed on the fly
-./turzx video clip.h264 --loop           # raw Annex-B H.264, repeating
-./turzx video clip.mp4 --fps 24          # override the frame rate
+./turzx video ~/Movies/clip.mp4          # MP4 会即时解复用
+./turzx video clip.h264 --loop           # 裸 Annex-B H.264，循环播放
+./turzx video clip.mp4 --fps 24          # 手动指定帧率
 ```
 
-MP4 handling is built in, so **ffmpeg is not needed** for this. Playback is
-paced by the panel, which means the whole clip is uploaded in a fraction of its
-duration and then keeps playing — that is expected.
+MP4 解析是内置的，所以**播放视频不需要 ffmpeg**。播放节奏由屏幕自己控制，意味着
+整段视频会在远短于其时长的时间内推送完毕、然后继续播放 —— 这是正常的。
 
-### System dashboard
+### 系统监控副屏
 
 ```sh
-./turzx dashboard                        # refresh every second
+./turzx dashboard                        # 每秒刷新
 ./turzx dashboard --interval 500ms
 ```
 
-Shows CPU, load average, memory, swap, network throughput, disk usage and
-temperature. Press Ctrl-C to stop.
+显示 CPU、负载、内存、交换分区、网络吞吐、磁盘占用和温度。按 Ctrl-C 停止。
 
-macOS reports no temperature: Apple Silicon exposes it only through the SMC,
-which needs access an unsigned command-line tool does not have. The layout
-adapts and gives the space to the disk panel instead.
+macOS 上不显示温度：Apple Silicon 的温度只能通过 SMC 读取，而未签名的命令行
+工具拿不到这个权限。此时布局会自动调整，把空间让给磁盘面板。
 
-### Second monitor
+### 第二显示器
 
 ```sh
-./turzx monitor                  # 30 fps, 16 Mbit/s
-./turzx monitor --bitrate 24000  # sharper motion, if your panel keeps up
-./turzx monitor --fps 24         # fewer frames, if it does not
+./turzx monitor                  # 30 fps，16 Mbit/s
+./turzx monitor --bitrate 24000  # 画面更清晰，前提是屏幕跟得上
+./turzx monitor --fps 24         # 降低帧率，如果跟不上的话
 ```
 
-See **[Extended desktop](#extended-desktop)** below — this one needs setup on
-Linux, and a permission on macOS.
+Linux 上需要额外配置、macOS 上需要授权，详见下面的
+**[扩展桌面](#扩展桌面)**。
 
-### Other commands
+### 其他命令
 
 ```sh
-./turzx brightness 60     # backlight, 0-100
-./turzx rotate 1          # 0-3, for a panel mounted sideways
-./turzx clear             # blank the screen
-./turzx sync              # handshake; also prints the firmware version
-./turzx storage           # SD card usage, if a card is inserted
-./turzx extract in.mp4 out.h264   # convert without touching the panel
+./turzx brightness 60     # 背光亮度，0-100
+./turzx rotate 1          # 0-3，屏幕竖装时用
+./turzx clear             # 清屏
+./turzx sync              # 握手，同时打印固件版本
+./turzx storage           # SD 卡用量（如果插了卡）
+./turzx extract in.mp4 out.h264   # 转换格式，不连接屏幕
 ```
 
-## Extended desktop
+## 扩展桌面
 
-`turzx monitor` creates a display the size of the panel, captures it, encodes
-H.264 and streams it, so the panel becomes a real second screen you can drag
-windows onto.
+`turzx monitor` 会创建一块和屏幕同尺寸的显示器，采集它、编码成 H.264 并推流，
+于是这块屏就成了真正的第二显示器，可以直接把窗口拖上去。
 
 ### macOS
 
-Permission is needed once: **System Settings → Privacy & Security → Screen
-Recording**, enable your terminal, then restart the terminal. macOS prompts for
-this on the first run, and without it capture fails with a message saying so.
+需要授权一次：**系统设置 → 隐私与安全性 → 屏幕录制**，勾选你的终端，然后**重启
+终端**。首次运行时 macOS 会主动弹窗询问；没有授权的话，采集会失败并给出明确
+提示。
 
-The virtual display is created by this program using the private
-`CGVirtualDisplay` API inside CoreGraphics — the same mechanism DisplayLink,
-BetterDisplay and DeskPad use. Two consequences worth knowing:
+虚拟显示器由本程序通过 CoreGraphics 内部的私有 API `CGVirtualDisplay` 创建 —— 与
+DisplayLink、BetterDisplay、DeskPad 用的是同一套机制。有两点需要知道：
 
-- It is **undocumented**, so a macOS update may break it.
-- It cannot be shipped on the Mac App Store.
+- 它是**未公开的 API**，macOS 任何一次更新都可能让它失效
+- 因此它无法上架 Mac App Store
 
 ### Linux
 
-Two requirements:
+两个前提条件：
 
-**1. An X11 session.** Log in choosing "Ubuntu on Xorg". Wayland is not
-supported: its compositors offer no way to create a virtual output, and screen
-capture goes through a portal rather than the X screen.
+**1. X11 会话。** 登录时选择「Ubuntu on Xorg」。不支持 Wayland：它的合成器没有
+提供创建虚拟输出的方式，而且屏幕采集要走 portal 而非 X 屏幕。
 
-**2. A virtual output that already exists.** A userspace program cannot create
-a display on Linux, so set one up first. Either install evdi:
+**2. 一个已经存在的虚拟输出。** Linux 上用户态程序无法创建显示器，需要先配好。
+要么安装 evdi：
 
 ```sh
 sudo apt install evdi-dkms && sudo modprobe evdi
 ```
 
-or add a dummy device to `xorg.conf`:
+要么在 `xorg.conf` 里加一个 dummy 设备：
 
 ```
 Section "Device"
@@ -188,112 +179,102 @@ Section "Device"
 EndSection
 ```
 
-Then run `turzx monitor`. It picks the output automatically, preferring one
-already sized to the panel. If you have several, choose with
-`--output <name>` — names come from `xrandr --query`. If it cannot find one it
-tells you what is available and what to install.
+然后运行 `turzx monitor`。它会自动挑选输出，优先选择尺寸已经和屏幕一致的那个。
+如果有多个，用 `--output <名称>` 指定 —— 名称可以从 `xrandr --query` 得到。如果
+找不到合适的输出，它会列出当前可用的并告诉你该怎么配。
 
-### Tuning
+### 调优
 
-The defaults target desktop content at 720×1280 over USB 2.0. If motion looks
-blocky, raise `--bitrate`; if it stutters, lower `--fps`. Note that a static
-screen produces almost no traffic — the panel keeps showing the last frame —
-so it is normal for the frame rate to sit low until something moves.
+默认参数面向 720×1280 的桌面内容、走 USB 2.0。如果运动中画面发糊，调高
+`--bitrate`；如果卡顿，调低 `--fps`。另外注意：画面静止时几乎没有数据流量（屏幕
+会一直显示最后一帧），所以帧率在没东西动的时候偏低是正常的。
 
-## Troubleshooting
+## 常见问题
 
 **`no TURZX display found`**
-The panel is either unplugged or in desktop mode. Check `lsusb` (Linux) or
-System Information → USB (macOS) for a `1cbe:` device. If you see `1a86:ad1x`
-instead, the panel is in desktop mode, which this project does not implement.
+屏幕没插，或者处于 desktop 模式。在 Linux 上用 `lsusb` 确认、在 macOS 上看「系统
+信息 → USB」，找 `1cbe:` 开头的设备。如果看到的是 `1a86:ad1x`，说明屏幕处于
+desktop 模式，本项目不支持。
 
 **`libusb: bad access` / `claim interface failed`**
-On Linux, the udev rule above is missing. On either system, another copy of
-`turzx` may still be running and holding the panel — only one process can use
-it at a time.
+Linux 上说明少了那条 udev 规则。两个系统上都可能是另一个 `turzx` 进程还在运行、
+占着屏幕 —— 同一时间只允许一个进程使用。
 
-**`claim interface 0` fails right after killing a previous run**
-The OS needs a moment to release the interface. Wait a few seconds.
+**刚杀掉上一个进程，`claim interface 0` 就失败**
+操作系统释放接口需要一点时间，等几秒再试。
 
-**Extended desktop: `Screen Recording permission is not granted`**
-See the macOS section above; the terminal must be restarted after granting it.
+**扩展桌面报 `Screen Recording permission is not granted`**
+见上面的 macOS 小节。授权之后必须重启终端。
 
-**Extended desktop: motion looks blocky or smeared**
-Raise `--bitrate`. If it is still blocky, note that the panel's hardware
-decoder only supports H.264 4:2:0, so fine coloured text keeps slight colour
-fringing — that part is not tunable.
+**扩展桌面运动中画面发糊、有拖影**
+调高 `--bitrate`。如果仍然糊，注意屏幕的硬件解码器只支持 H.264 4:2:0，所以小号
+彩色文字会有轻微彩边 —— 这部分无法调整。
 
-**Video plays much faster than it should**
-Playback is paced by the panel from its own buffer. If the panel ignores the
-requested frame rate, pass `--fps` explicitly.
+**视频播放速度明显偏快**
+播放节奏由屏幕根据自己的缓冲区控制。如果屏幕忽略了请求的帧率，用 `--fps` 显式
+指定。
 
-## Status
+## 进度
 
 | | macOS | Linux |
 |---|---|---|
-| Images, video, brightness, rotate | ✅ verified | ⚠️ untested |
-| System dashboard | ✅ verified | ⚠️ untested |
-| Extended desktop | ✅ verified | ⚠️ untested |
+| 图片、视频、亮度、旋转 | ✅ 已验证 | ⚠️ 未验证 |
+| 系统监控副屏 | ✅ 已验证 | ⚠️ 未验证 |
+| 扩展桌面 | ✅ 已验证 | ⚠️ 未验证 |
 
-macOS has been exercised against a real 5.2" panel on macOS 26.6.2 (Apple
-Silicon). **The Linux paths are implemented but have not yet been run on real
-hardware** — expect to fix things, and reports are welcome.
+macOS 已在真实的 5.2" 屏幕上验证过（macOS 26.6.2 / Apple Silicon）。**Linux 部分
+代码已完成，但尚未在真机上运行过** —— 预计会遇到需要修的地方，欢迎反馈。
 
-## How it works
+## 实现原理
 
-Panels in LCD mode expose a single vendor-specific USB interface with two bulk
-endpoints (`0x01` OUT, `0x81` IN). Every message is a 512-byte block: a
-DES-CBC-encrypted 500-byte command packet, optionally followed by a raw payload
-such as a JPEG image or a chunk of H.264.
+LCD 模式下的屏幕会暴露一个厂商自定义的 USB 接口，带两个批量端点
+（`0x01` OUT、`0x81` IN）。每条消息都是一个 512 字节的块：一个用 DES-CBC 加密的
+500 字节命令包，后面可以跟一段原始载荷，比如 JPEG 图片或一段 H.264 数据。
 
-The full wire format — including the golden test vector that pins the
-encryption down — is documented in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
+完整的协议格式 —— 包括用于锁定加密实现的黄金测试向量 —— 见
+**[docs/PROTOCOL.md](docs/PROTOCOL.md)**。
 
-## Layout
+## 目录结构
 
 ```
-cmd/turzx/          command-line interface
-internal/proto/     wire protocol: encryption, framing, commands (pure Go)
-internal/usb/       USB transport and high-level panel operations
-internal/media/     MP4 -> Annex-B H.264 demuxer (pure Go, no ffmpeg needed)
-internal/metrics/   system statistics, per platform
-internal/dashboard/ renders metrics to a frame and pushes it
-internal/vdisplay/  creates or finds a virtual display
-internal/capture/   captures a display and encodes it to H.264
-docs/PROTOCOL.md    the reverse-engineered protocol reference
+cmd/turzx/          命令行入口
+internal/proto/     协议层：加密、组帧、命令（纯 Go）
+internal/usb/       USB 传输与屏幕操作
+internal/media/     MP4 → Annex-B H.264 解复用（纯 Go，不需要 ffmpeg）
+internal/metrics/   系统指标采集，分平台实现
+internal/dashboard/ 把指标渲染成画面并推送
+internal/vdisplay/  创建或查找虚拟显示器
+internal/capture/   采集显示器并编码为 H.264
+docs/PROTOCOL.md    逆向得到的协议参考
 ```
 
-## Development
+## 开发
 
 ```sh
 go test ./...
 ```
 
-To exercise the MP4 demuxer against a real file:
+用真实文件测试 MP4 解复用：
 
 ```sh
 TURZX_TEST_MP4=/path/to/video.mp4 go test ./internal/media/ -v
 ```
 
-## Notes and limitations
+## 说明与限制
 
-* The panel has **two USB modes**. This project targets **LCD mode**
-  (`1cbe:00xx`), which is what the panel boots into. The vendor's Windows
-  driver instead uses **desktop mode** (`1a86:AD1x`), a different protocol that
-  is not implemented here.
-* A single USB transfer must stay below 1 MiB or the device times out; larger
-  payloads are split automatically.
-* Playback of files stored on the panel's own SD card is implemented at the
-  protocol level but needs a card inserted, and is untested.
-* This is an **unofficial, reverse-engineered** implementation. It is not
-  affiliated with TURZX.
+* 屏幕有**两种 USB 模式**。本项目针对的是 **LCD 模式**（`1cbe:00xx`），也就是屏幕
+  开机后默认所处的模式。厂商的 Windows 驱动走的是 **desktop 模式**
+  （`1a86:AD1x`），那是另一套协议，本项目未实现。
+* 单次 USB 传输必须小于 1 MiB，否则设备会超时；更大的载荷会被自动分片。
+* 播放屏幕自身 SD 卡上的文件，协议层已实现，但需要插卡，且未经验证。
+* 这是**非官方的逆向实现**，与图灵智显（TURZX）官方无关。
 
-## Credits
+## 致谢
 
-The protocol was independently confirmed against
-[`turing-smart-screen-python`](https://github.com/mathoudebine/turing-smart-screen-python),
-whose reference implementation for this device family was invaluable.
+协议的正确性经过
+[`turing-smart-screen-python`](https://github.com/mathoudebine/turing-smart-screen-python)
+交叉验证，该项目对这一系列设备的参考实现非常有价值。
 
-## License
+## 许可证
 
-MIT — see [LICENSE](LICENSE).
+MIT —— 见 [LICENSE](LICENSE)。
