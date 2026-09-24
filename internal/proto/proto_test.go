@@ -12,9 +12,10 @@ import (
 // timestamp field deterministic.
 var midnight = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// Golden vectors computed from the reverse-engineered vendor application and
-// cross-checked against the turing-smart-screen-python reference
-// implementation. These lock the encryption, padding and framing in place.
+// Golden vectors that lock the encryption, padding and framing in place. They
+// were cross-checked against the turing-smart-screen-python reference
+// implementation for the same device family, so an implementation reproducing
+// them is byte-compatible with a known-good one.
 func TestSealGoldenVectors(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -3,8 +3,7 @@
 //
 // The panels speak a vendor protocol over two bulk endpoints, so no kernel
 // driver is required on either platform. See docs/PROTOCOL.md for the wire
-// format, which was recovered by reverse-engineering the vendor's Windows
-// application.
+// format.
 package main
 
 import (

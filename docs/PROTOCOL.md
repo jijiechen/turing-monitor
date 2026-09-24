@@ -1,8 +1,9 @@
 # TURZX USB display protocol
 
 This documents the wire protocol used by TURZX / 图灵智显 panels in **LCD mode**
-(USB `1cbe:0050` and siblings). It was recovered by reverse-engineering the
-vendor's Windows application, and then confirmed byte-for-byte against the
+(USB `1cbe:0050` and siblings). It is an independent implementation, not
+published or endorsed by the vendor, and it has been confirmed byte-for-byte
+against the
 [`turing-smart-screen-python`](https://github.com/mathoudebine/turing-smart-screen-python)
 reference implementation. Every claim below has been exercised against physical
 hardware.

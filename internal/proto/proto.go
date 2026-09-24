@@ -1,9 +1,9 @@
 // Package proto implements the TURZX USB display wire protocol.
 //
-// The protocol was recovered by reverse-engineering the vendor's Windows
-// application (TURZX.exe) and independently confirmed against the
-// turing-smart-screen-python project, which supports the same 0x1cbe device
-// family. See docs/PROTOCOL.md.
+// This is an independent implementation of the protocol these devices speak,
+// not published or endorsed by the vendor. It was confirmed byte-for-byte
+// against the turing-smart-screen-python project, which supports the same
+// 0x1cbe device family. See docs/PROTOCOL.md.
 //
 // Every host-to-device message is a 512-byte block:
 //
