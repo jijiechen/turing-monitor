@@ -27,10 +27,15 @@ name: release
 # a failed run has to be re-triggered by deleting and re-pushing the tag.
 # ---------------------------------------------------------------------------
 #
-# Note on cgo: the USB layer wraps libusb through cgo, so each target has to be
-# built on a matching runner rather than cross-compiled. The darwin/amd64 build
-# is the one exception -- Go passes the right -arch to clang, so an arm64 runner
-# can produce it.
+# Note on cgo: the USB layer wraps libusb through cgo, so every target is built
+# on an architecture-matched runner. GOARCH is deliberately not set anywhere --
+# Go silently disables cgo when cross-compiling, which drops every file that
+# imports "C" and produces a build that fails with confusing errors about
+# undefined symbols in gousb and internal/metrics. Building on a matching
+# runner is what keeps cgo on.
+#
+# GitHub retires the last Intel macOS image in August 2027, after which
+# darwin/amd64 will have to be dropped or built some other way.
 #
 # The resulting binaries link libusb dynamically, so macOS users still need
 # `brew install libusb` and Linux users `libusb-1.0-0`. That is documented in
@@ -57,16 +62,12 @@ jobs:
       matrix:
         include:
           - os: macos-14 # Apple Silicon
-            goarch: arm64
             artifact: turzx-darwin-arm64
-          - os: macos-14
-            goarch: amd64
+          - os: macos-15-intel # last Intel image; retired August 2027
             artifact: turzx-darwin-amd64
           - os: ubuntu-24.04
-            goarch: amd64
             artifact: turzx-linux-amd64
           - os: ubuntu-24.04-arm
-            goarch: arm64
             artifact: turzx-linux-arm64
 
     steps:
@@ -87,11 +88,14 @@ jobs:
           sudo apt-get install -y libusb-1.0-0-dev
 
       - name: Build
-        env:
-          GOARCH: ${{ matrix.goarch }}
-          # Homebrew's libusb is not on the default pkg-config path.
-          PKG_CONFIG_PATH: ${{ runner.os == 'macOS' && '/opt/homebrew/lib/pkgconfig' || '' }}
         run: |
+          # Homebrew's libusb is not on the default pkg-config path, and its
+          # prefix differs between architectures (/opt/homebrew vs /usr/local),
+          # so ask rather than assume.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            export PKG_CONFIG_PATH="$(brew --prefix)/lib/pkgconfig"
+          fi
+          echo "building ${{ matrix.artifact }} for $(go env GOOS)/$(go env GOARCH), cgo=$(go env CGO_ENABLED)"
           go build -trimpath -ldflags "-s -w" -o ${{ matrix.artifact }} ./cmd/turzx
 
       - name: Verify the binary runs
