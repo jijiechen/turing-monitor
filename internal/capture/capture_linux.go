@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+
+	"github.com/jijiechen/turing-monitor/internal/framesrc"
 )
 
 // chunkSize is how much of the encoded stream to read per call.
@@ -34,6 +36,10 @@ type Session struct {
 	stderr   *bytes.Buffer
 	stderrWG sync.WaitGroup
 
+	// source is set when the frames come from a display rather than from
+	// screen capture.
+	source framesrc.Source
+
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -48,6 +54,12 @@ func Start(opts Options) (*Session, error) {
 	opts, err := opts.normalise()
 	if err != nil {
 		return nil, err
+	}
+
+	// A display that owns its framebuffer needs no capture at all: the pixels
+	// are already there, so ffmpeg only has to encode them.
+	if opts.Source != nil {
+		return startFromSource(opts)
 	}
 
 	ffmpeg, err := exec.LookPath("ffmpeg")
@@ -152,4 +164,105 @@ func (s *Session) Close() error {
 		_ = s.cmd.Wait()
 	})
 	return s.closeErr
+}
+
+// startFromSource encodes frames that a display already owns.
+//
+// There is no screen capture on this path. The pixels come from the display
+// itself, which is what evdi provides, so ffmpeg is used purely as an encoder
+// and the whole detour through a compositor disappears.
+func startFromSource(opts Options) (*Session, error) {
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return nil, errors.New("capture: ffmpeg is required to encode the display's frames; " +
+			"install it with: sudo apt install ffmpeg")
+	}
+
+	pixFmt, err := ffmpegPixelFormat(opts.Source.Format())
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{
+		"-loglevel", "error",
+		"-f", "rawvideo",
+		"-pixel_format", pixFmt,
+		"-video_size", fmt.Sprintf("%dx%d", opts.Width, opts.Height),
+		"-framerate", strconv.Itoa(opts.FPS),
+		"-i", "-",
+		"-vf", fmt.Sprintf("transpose=%d", opts.QuarterTurns),
+		"-c:v", "libx264",
+		"-preset", "ultrafast",
+		"-tune", "zerolatency",
+		"-profile:v", "high",
+		"-pix_fmt", "yuv420p",
+		"-b:v", strconv.Itoa(opts.Bitrate),
+		"-maxrate", strconv.Itoa(opts.Bitrate * 3 / 2),
+		"-bufsize", strconv.Itoa(opts.Bitrate * 2),
+		"-g", strconv.Itoa(opts.FPS),
+		"-f", "h264",
+		"-",
+	}
+
+	cmd := exec.Command(ffmpeg, args...)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("capture: ffmpeg stdin: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("capture: ffmpeg stdout: %w", err)
+	}
+
+	s := &Session{
+		cmd:    cmd,
+		stdout: stdout,
+		reader: bufio.NewReaderSize(stdout, 2*chunkSize),
+		buf:    make([]byte, chunkSize),
+		stderr: &bytes.Buffer{},
+		source: opts.Source,
+	}
+	cmd.Stderr = s.stderr
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("capture: start ffmpeg: %w", err)
+	}
+
+	go s.pumpFrames(stdin)
+	return s, nil
+}
+
+// pumpFrames feeds the encoder until the source or ffmpeg stops.
+func (s *Session) pumpFrames(w io.WriteCloser) {
+	defer w.Close()
+	for {
+		pix, _, _, err := s.source.NextFrame()
+		if err != nil {
+			return
+		}
+		if _, err := w.Write(pix); err != nil {
+			// ffmpeg has gone away, which Next() will report.
+			return
+		}
+	}
+}
+
+// ffmpegPixelFormat names the layout the way ffmpeg expects.
+//
+// A DRM fourcc describes a 32-bit word; ffmpeg names the byte order in memory
+// on a little-endian machine. So XRGB and ARGB both lay bytes down as blue,
+// green, red, then an unused byte, which ffmpeg calls bgra. Getting this
+// backwards produces a picture with the red and blue channels swapped, which
+// is obvious on screen but easy to misread as a colour problem elsewhere.
+func ffmpegPixelFormat(f framesrc.Format) (string, error) {
+	switch f {
+	case framesrc.FormatXRGB888, framesrc.FormatARGB888:
+		return "bgra", nil
+	case framesrc.FormatXBGR888, framesrc.FormatABGR888:
+		return "rgba", nil
+	case framesrc.FormatRGB565:
+		return "rgb565le", nil
+	default:
+		return "", fmt.Errorf("capture: no ffmpeg pixel format for %s (%#x)", f, uint32(f))
+	}
 }

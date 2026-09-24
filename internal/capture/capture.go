@@ -6,7 +6,11 @@
 // region with ffmpeg, which also does the encoding.
 package capture
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jijiechen/turing-monitor/internal/framesrc"
+)
 
 // Options configures a capture session.
 type Options struct {
@@ -30,6 +34,11 @@ type Options struct {
 	// Bitrate is the target H.264 bitrate in bits per second. Zero means a
 	// default suitable for desktop content.
 	Bitrate int
+	// Source, when set, supplies raw frames directly instead of screen
+	// capture. It is how a display that owns its own framebuffer is fed: the
+	// pixels are already available, so grabbing the screen would be a detour
+	// through the compositor.
+	Source framesrc.Source
 }
 
 // defaultBitrate targets desktop content at the panel's resolution. Text and

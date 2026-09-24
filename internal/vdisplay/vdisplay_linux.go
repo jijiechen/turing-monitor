@@ -26,18 +26,35 @@ func Create(opts Options) (*Display, error) {
 		return nil, err
 	}
 
+	// evdi first: it creates a real DRM device with its own framebuffer, so
+	// there is no screen to capture and no X server involved at all. The X11
+	// path below is the fallback for systems without the kernel module.
+	evdiSource, evdiErr := openEVDI(opts)
+	if evdiErr == nil {
+		return &Display{
+			name:   opts.Name,
+			width:  opts.Width,
+			height: opts.Height,
+			source: evdiSource,
+		}, nil
+	}
+
 	if os.Getenv("DISPLAY") == "" {
 		return nil, &UnsupportedError{
 			Platform: "Linux without X11",
-			Detail:   "no DISPLAY is set, so there is no X screen to capture",
-			Hint:     `log in with an "Ubuntu on Xorg" session; Wayland offers no way to create a virtual output`,
+			Detail: "evdi could not be used (" + evdiErr.Error() + ") " +
+				"and no DISPLAY is set, so there is no X screen to capture either",
+			Hint: "either install the evdi kernel module, which also removes the need for X:\n" +
+				"          sudo apt install evdi-dkms && sudo modprobe evdi\n" +
+				`        or log in with an "Ubuntu on Xorg" session`,
 		}
 	}
 	if _, err := exec.LookPath("xrandr"); err != nil {
 		return nil, &UnsupportedError{
 			Platform: "Linux",
-			Detail:   "xrandr is not installed, so outputs cannot be inspected",
-			Hint:     "sudo apt install x11-xserver-utils",
+			Detail: "evdi could not be used (" + evdiErr.Error() + ") " +
+				"and xrandr is not installed, so outputs cannot be inspected",
+			Hint: "sudo apt install x11-xserver-utils, or install evdi",
 		}
 	}
 
@@ -56,7 +73,7 @@ func Create(opts Options) (*Display, error) {
 	if opts.Output != "" {
 		for _, o := range outputs {
 			if o.name == opts.Output {
-				return displayFrom(o, opts), nil
+				return displayFrom(o, opts, evdiErr), nil
 			}
 		}
 		return nil, &UnsupportedError{
@@ -66,7 +83,7 @@ func Create(opts Options) (*Display, error) {
 	}
 
 	if o, ok := pickVirtualOutput(outputs, opts.Width, opts.Height); ok {
-		return displayFrom(o, opts), nil
+		return displayFrom(o, opts, evdiErr), nil
 	}
 
 	return nil, &UnsupportedError{
@@ -85,14 +102,17 @@ func Create(opts Options) (*Display, error) {
 	}
 }
 
-// displayFrom converts a probed output into a Display.
-func displayFrom(o output, opts Options) *Display {
+// displayFrom converts a probed output into a Display. evdiErr is carried
+// along so the caller can report that this display came from the fallback.
+func displayFrom(o output, opts Options, evdiErr error) *Display {
 	w, h := opts.Width, opts.Height
 	if w <= 0 || h <= 0 {
 		w, h = o.width, o.height
 	}
 	// On Linux capture is addressed by screen region, so the origin matters.
-	return &Display{name: o.name, x: o.x, y: o.y, width: w, height: h}
+	// sourceErr carries the reason evdi was not used, so the caller can say
+	// which path it fell back to.
+	return &Display{name: o.name, x: o.x, y: o.y, width: w, height: h, sourceErr: evdiErr}
 }
 
 func outputNames(outputs []output) string {

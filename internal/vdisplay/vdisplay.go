@@ -13,7 +13,11 @@
 //     already been configured and capture it.
 package vdisplay
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/jijiechen/turing-monitor/internal/framesrc"
+)
 
 // Options describes the virtual display to create or find.
 type Options struct {
@@ -27,6 +31,10 @@ type Options struct {
 	Width, Height int
 	// RefreshHz is the requested refresh rate. Zero means 60.
 	RefreshHz int
+	// WidthMM and HeightMM are the physical size to report in the EDID. They
+	// matter because a compositor derives a display's scale factor from the
+	// ratio of pixel size to physical size; see BuildEDID.
+	WidthMM, HeightMM int
 }
 
 // normalise fills in defaults and rejects impossible geometry.
@@ -39,6 +47,14 @@ func (o Options) normalise() (Options, error) {
 	}
 	if o.Name == "" {
 		o.Name = "TURZX"
+	}
+	if o.WidthMM <= 0 || o.HeightMM <= 0 {
+		// Report about 100 DPI. A realistic size for a small panel would make
+		// a compositor treat it as high density and hand back a cramped
+		// logical desktop, which is the same trap the macOS side hit.
+		const logicalDPI = 100.0
+		o.WidthMM = int(float64(o.Width) / logicalDPI * 25.4)
+		o.HeightMM = int(float64(o.Height) / logicalDPI * 25.4)
 	}
 	return o, nil
 }
@@ -55,7 +71,25 @@ type Display struct {
 	x, y   int
 	width  int
 	height int
+
+	// source is set when the display also produces its own pixels, as evdi
+	// does on Linux: the kernel module creates a real DRM device and the
+	// library hands back its framebuffer. Callers that capture should prefer
+	// it, since it needs no screenshot and no X server.
+	source framesrc.Source
+
+	// sourceErr records why a pixel-producing display was unavailable, so a
+	// caller falling back to screen capture can explain what it lost.
+	sourceErr error
 }
+
+// Source returns a pixel source when the display provides its own, or nil when
+// the caller has to capture the screen instead.
+func (d *Display) Source() framesrc.Source { return d.source }
+
+// SourceError returns the reason a pixel-producing display was unavailable, or
+// nil if one was found.
+func (d *Display) SourceError() error { return d.sourceErr }
 
 // ID returns the platform display identifier.
 func (d *Display) ID() uint32 { return d.id }

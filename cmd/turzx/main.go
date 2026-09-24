@@ -526,13 +526,23 @@ func cmdMonitor(ctx context.Context, opts monitorOpts) error {
 		QuarterTurns: int(opts.orientation),
 		FPS:          opts.fps,
 		Bitrate:      opts.bitrate,
+		Source:       display.Source(),
 	})
 	if err != nil {
 		return err
 	}
 	defer session.Close()
-	fmt.Printf("capturing %dx%d, encoding %dx%d at %d fps, %d kbit/s\n",
-		w, h, nativeW, nativeH, opts.fps, opts.bitrate/1000)
+	// Say which way the pixels arrive. On Linux these are genuinely different
+	// paths -- a display that owns its framebuffer against a screenshot -- and
+	// which one is in use changes what can go wrong.
+	capturePath := "screen capture"
+	if display.Source() != nil {
+		capturePath = "display framebuffer (" + display.Source().Format().String() + ")"
+	} else if err := display.SourceError(); err != nil {
+		capturePath = "screen capture (framebuffer unavailable: " + err.Error() + ")"
+	}
+	fmt.Printf("capturing %dx%d by %s, encoding %dx%d at %d fps, %d kbit/s\n",
+		w, h, capturePath, nativeW, nativeH, opts.fps, opts.bitrate/1000)
 
 	return usb.Supervise(ctx, newTimestampWriter(os.Stdout), func(dev *usb.Device) error {
 		return streamToPanel(ctx, dev, session, opts)
