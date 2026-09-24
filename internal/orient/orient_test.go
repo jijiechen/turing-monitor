@@ -218,3 +218,59 @@ func BenchmarkRotate90(b *testing.B) {
 		})
 	}
 }
+
+// TestToNativePlacesContentTopOnTheRightEdge pins the mapping between a
+// mounting and the rotation applied. It is derived rather than guessed:
+// content's top row has to land on whichever native edge faces up for the
+// viewer, and getting this backwards yields an upside-down-looking panel that
+// is easy to mistake for a bug elsewhere.
+func TestToNativePlacesContentTopOnTheRightEdge(t *testing.T) {
+	const nativeW, nativeH = 720, 1280
+
+	for _, tc := range []struct {
+		o Orientation
+		// wantEdge names the native edge that content's top row lands on.
+		wantEdge string
+	}{
+		{Portrait, "top"},            // native top stays up
+		{Landscape, "right"},         // panel turned anticlockwise: right edge is up
+		{PortraitInverted, "bottom"}, // half a turn
+		{LandscapeInverted, "left"},  // panel turned clockwise: left edge is up
+	} {
+		cw, ch := tc.o.ContentSize(nativeW, nativeH)
+		content := image.NewRGBA(image.Rect(0, 0, cw, ch))
+		// Mark the whole top row of the content.
+		for x := 0; x < cw; x++ {
+			content.Set(x, 0, color.RGBA{R: 255, A: 255})
+		}
+
+		native := tc.o.ToNative(content)
+		if b := native.Bounds(); b.Dx() != nativeW || b.Dy() != nativeH {
+			t.Fatalf("%s: native size %dx%d, want %dx%d", tc.o, b.Dx(), b.Dy(), nativeW, nativeH)
+		}
+
+		// Count marked pixels along each edge of the native framebuffer.
+		counts := map[string]int{}
+		for x := 0; x < nativeW; x++ {
+			if c := at(native, x, 0); c.R > 128 {
+				counts["top"]++
+			}
+			if c := at(native, x, nativeH-1); c.R > 128 {
+				counts["bottom"]++
+			}
+		}
+		for y := 0; y < nativeH; y++ {
+			if c := at(native, 0, y); c.R > 128 {
+				counts["left"]++
+			}
+			if c := at(native, nativeW-1, y); c.R > 128 {
+				counts["right"]++
+			}
+		}
+
+		if counts[tc.wantEdge] == 0 {
+			t.Errorf("%s: content's top row did not land on the native %s edge (found: %v)",
+				tc.o, tc.wantEdge, counts)
+		}
+	}
+}

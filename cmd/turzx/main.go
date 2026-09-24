@@ -23,6 +23,7 @@ import (
 	"github.com/jijiechen/turing-monitor/internal/capture"
 	"github.com/jijiechen/turing-monitor/internal/dashboard"
 	"github.com/jijiechen/turing-monitor/internal/media"
+	"github.com/jijiechen/turing-monitor/internal/orient"
 	"github.com/jijiechen/turing-monitor/internal/usb"
 	"github.com/jijiechen/turing-monitor/internal/vdisplay"
 )
@@ -33,7 +34,10 @@ Usage:
   turzx info                     list attached panels
   turzx sync                     handshake with the panel
   turzx clear                    blank the screen
-  turzx image <file>             display a JPEG or PNG, scaled to fit
+  turzx image [--orientation NAME] <file>
+                                 display a JPEG or PNG, scaled to fit
+                                 NAME: portrait | landscape | portrait-inverted |
+                                       landscape-inverted
   turzx video [--loop] [--fps N] <file>
                                  stream an MP4 or raw Annex-B H.264 file
   turzx brightness <0-100>       set the backlight
@@ -125,10 +129,11 @@ func run(args []string) error {
 		return dev.Clear()
 
 	case "image":
-		if len(rest) != 1 {
-			return errors.New("usage: turzx image <file>")
+		imgOpts, err := parseImageArgs(rest)
+		if err != nil {
+			return err
 		}
-		return cmdImage(dev, rest[0])
+		return cmdImage(dev, imgOpts)
 
 	case "video":
 		opts, err := parseVideoArgs(rest)
@@ -191,16 +196,63 @@ func cmdInfo() error {
 	return nil
 }
 
-func cmdImage(dev *usb.Device, path string) error {
-	data, err := os.ReadFile(path)
+// imageOpts holds the parsed flags for the image subcommand.
+type imageOpts struct {
+	path        string
+	orientation orient.Orientation
+}
+
+// parseImageArgs accepts: [--orientation NAME] <file>
+func parseImageArgs(args []string) (imageOpts, error) {
+	opts := imageOpts{orientation: orient.Portrait}
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--orientation" || arg == "--rotate":
+			if i+1 >= len(args) {
+				return opts, errors.New("--orientation needs a value: " + orientationNames())
+			}
+			i++
+			o, err := orient.Parse(args[i])
+			if err != nil {
+				return opts, err
+			}
+			opts.orientation = o
+		case strings.HasPrefix(arg, "-"):
+			return opts, fmt.Errorf("unknown flag %q", arg)
+		default:
+			if opts.path != "" {
+				return opts, errors.New("usage: turzx image [--orientation NAME] <file>")
+			}
+			opts.path = arg
+		}
+	}
+	if opts.path == "" {
+		return opts, errors.New("usage: turzx image [--orientation NAME] <file>")
+	}
+	return opts, nil
+}
+
+// orientationNames lists the accepted values, for error messages and help.
+func orientationNames() string {
+	names := make([]string, 0, 4)
+	for _, o := range orient.All() {
+		names = append(names, o.String())
+	}
+	return strings.Join(names, ", ")
+}
+
+func cmdImage(dev *usb.Device, opts imageOpts) error {
+	data, err := os.ReadFile(opts.path)
 	if err != nil {
 		return err
 	}
-	jpeg, err := prepareImage(data, dev.Model())
+	jpeg, err := prepareImage(data, dev.Model(), opts.orientation)
 	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return fmt.Errorf("%s: %w", opts.path, err)
 	}
-	fmt.Printf("sending %s as %d bytes of JPEG (%s)\n", path, len(jpeg), dev.Model())
+	cw, ch := opts.orientation.ContentSize(dev.Portrait())
+	fmt.Printf("sending %s as %d bytes of JPEG (%s, %s %dx%d)\n",
+		opts.path, len(jpeg), dev.Model(), opts.orientation, cw, ch)
 	return dev.ShowJPEG(jpeg)
 }
 

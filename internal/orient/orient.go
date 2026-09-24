@@ -27,15 +27,17 @@ const (
 	// Portrait is the panel as it comes: taller than it is wide.
 	Portrait Orientation = iota
 
-	// Landscape means the panel has been turned a quarter turn clockwise, so
-	// its native top edge is now on the viewer's right.
+	// Landscape means the panel has been turned a quarter turn anticlockwise,
+	// so its native top edge is on the viewer's left and the viewer's up
+	// direction is the panel's native right edge.
 	Landscape
 
 	// PortraitInverted is half a turn.
 	PortraitInverted
 
-	// LandscapeInverted is three quarters of a turn clockwise, which is the
-	// same as a quarter turn anticlockwise.
+	// LandscapeInverted is the other way up: the panel has been turned a
+	// quarter turn clockwise, so its native top edge is on the viewer's right
+	// and the viewer's up direction is the panel's native left edge.
 	LandscapeInverted
 )
 

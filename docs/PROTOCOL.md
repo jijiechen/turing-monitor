@@ -205,6 +205,51 @@ ceiling for still-image animation and is what the dashboard mode uses.
 sample's length-prefixed NAL units to start codes, and prepend the SPS/PPS from
 the `avcC` box).
 
+## Writing settings is dangerous and delayed
+
+**Read this before sending command 125, or any command whose payload fields are
+not fully understood.**
+
+Command 125 saves settings to the panel's own storage. Two properties make it
+easy to break a working panel with it, and both were learned the hard way on
+real hardware:
+
+1. **Every field you do not set is zero.** The packet is zero-initialised, so
+   sending only the field you care about silently writes zeros to all the
+   others. `[8]` is the backlight level, so setting only `[11]` (rotation) turns
+   the backlight off.
+
+2. **It takes effect at the next boot, not immediately.** The screen keeps
+   working normally right after a bad write, which makes the write look
+   harmless. The damage only appears after the panel is unplugged or rebooted.
+   Verifying a settings write by looking at the screen will tell you nothing.
+
+Recovery, in order:
+
+```
+14  with [8] = 102     set the backlight directly; this one is immediate
+125 with [8] = 102 and every other field 0    write a sane full configuration
+11                     reboot, so the corrected settings take effect
+```
+
+A bad settings write cannot brick the panel. These are configuration values,
+not firmware, and the protocol has no way to write firmware.
+
+### Commands with unknown semantics
+
+`[9]` startup, `[12]` sleep and `[13]` offline in command 125 have no documented
+meaning here. Zero is what the reference implementation uses, and is the value
+that restored a panel, but that is not the same as knowing what they do. Treat
+them as unknown and avoid writing them.
+
+### Rotation does not apply to pushed content
+
+Both `13` and `125` (with a rotation value) were tested against a 5.2" panel
+with a still image on screen. **Neither has any visible effect.** Rotation is
+therefore not a device-side property of pushed content, and an application that
+needs it must rotate on the host. Command 13's bare form is used by the vendor
+application as part of the video prelude, which is a different thing.
+
 ## Verifying an implementation
 
 The encryption is deterministic, so a golden vector pins it down:

@@ -15,6 +15,7 @@ import (
 
 	xdraw "golang.org/x/image/draw"
 
+	"github.com/jijiechen/turing-monitor/internal/orient"
 	"github.com/jijiechen/turing-monitor/internal/proto"
 )
 
@@ -26,15 +27,19 @@ var jpegQualities = []int{95, 90, 85, 80, 70, 60, 50}
 // the panel, preserving the source aspect ratio and letterboxing the remainder
 // with black.
 //
-// The panel always receives images in its native portrait orientation and does
-// not scale, so the host has to do all fitting.
-func prepareImage(data []byte, model proto.Model) ([]byte, error) {
+// The panel always receives images in its native orientation and does not
+// scale, so the host does all fitting. Content is laid out at the size the
+// viewer sees, then rotated into that native orientation: laying it out in
+// native coordinates first would put the black bars on the wrong sides.
+func prepareImage(data []byte, model proto.Model, o orient.Orientation) ([]byte, error) {
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("decode image: %w", err)
 	}
 
-	w, h := model.Portrait()
+	nativeW, nativeH := model.Portrait()
+	w, h := o.ContentSize(nativeW, nativeH)
+
 	canvas := image.NewRGBA(image.Rect(0, 0, w, h))
 	fillBlack(canvas)
 
@@ -42,7 +47,11 @@ func prepareImage(data []byte, model proto.Model) ([]byte, error) {
 	offset := image.Pt((w-scaled.Bounds().Dx())/2, (h-scaled.Bounds().Dy())/2)
 	draw.Draw(canvas, scaled.Bounds().Add(offset), scaled, scaled.Bounds().Min, draw.Src)
 
-	return encodeJPEG(canvas)
+	var out image.Image = canvas
+	if o != orient.Portrait {
+		out = o.ToNative(canvas)
+	}
+	return encodeJPEG(out)
 }
 
 // fit scales src down to fit within w x h, preserving aspect ratio. Images
