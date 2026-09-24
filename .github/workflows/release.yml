@@ -134,6 +134,12 @@ jobs:
           files: dist/*
           generate_release_notes: true
           body: |
+            > [!WARNING]
+            > 本项目是非官方的第三方实现，与图灵智显（TURZX）官方无关，**不是官方驱动**。
+            > 使用中若因软件实现的局限、操作失误或硬件差异导致屏幕异常
+            > 乃至损坏，**风险与后果由使用者自行承担**。
+            > 详见 [README](https://github.com/jijiechen/turing-monitor#免责声明)。
+
             预编译二进制见下方附件。它们动态链接 libusb，所以请先安装：
 
               macOS          brew install libusb
