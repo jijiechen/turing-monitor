@@ -7,6 +7,26 @@ name: release
 #
 #     git tag v0.1.0 && git push origin v0.1.0
 #
+# ---------------------------------------------------------------------------
+# REQUIRED ONE-TIME SETUP
+#
+# New personal repositories default to READ-ONLY workflow permissions, and a
+# workflow-level `permissions: contents: write` does not reliably override
+# that. The build jobs will succeed and the release job will fail with
+# "Resource not accessible by integration".
+#
+# Enable it once under:
+#   Settings > Actions > General > Workflow permissions
+#     -> "Read and write permissions"
+#
+# or from the command line:
+#   gh api -X PUT repos/OWNER/REPO/actions/permissions/workflow \
+#     -f default_workflow_permissions=write
+#
+# Note that changing the setting does not affect runs that already started;
+# a failed run has to be re-triggered by deleting and re-pushing the tag.
+# ---------------------------------------------------------------------------
+#
 # Note on cgo: the USB layer wraps libusb through cgo, so each target has to be
 # built on a matching runner rather than cross-compiled. The darwin/amd64 build
 # is the one exception -- Go passes the right -arch to clang, so an arm64 runner
@@ -22,12 +42,13 @@ on:
       - "v*"
   workflow_dispatch:
 
+# Least privilege by default; the release job opts into write for itself.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
-    name: ${{ matrix.artifact }}
+    name: build ${{ matrix.artifact }}
     runs-on: ${{ matrix.os }}
     strategy:
       # Keep going if one target fails; a missing arm64 build should not cost
@@ -75,14 +96,38 @@ jobs:
 
       - name: Verify the binary runs
         # A build that links but cannot start is the failure mode worth
-        # catching here, since the linked libusb is the risky part.
+        # catching, since the dynamically linked libusb is the risky part.
         run: ./${{ matrix.artifact }} --help
 
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  # Collecting the uploads into one job rather than letting every matrix leg
+  # publish avoids several jobs racing to create and update the same release.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download all builds
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: List what will be published
+        run: ls -la dist
+
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact }}
+          files: dist/*
           generate_release_notes: true
           body: |
             Prebuilt binaries are attached below. They link libusb
@@ -96,3 +141,6 @@ jobs:
 
             On Linux, install the udev rule from `packaging/linux/` so the
             panel works without root.
+
+            Note: the Linux support has not yet been verified against real
+            hardware. See the README for the current state.
