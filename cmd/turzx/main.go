@@ -21,9 +21,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jijiechen/turing-monitor/internal/capture"
 	"github.com/jijiechen/turing-monitor/internal/dashboard"
 	"github.com/jijiechen/turing-monitor/internal/media"
 	"github.com/jijiechen/turing-monitor/internal/usb"
+	"github.com/jijiechen/turing-monitor/internal/vdisplay"
 )
 
 const usage = `turzx — drive a TURZX / 图灵智显 USB display
@@ -37,6 +39,8 @@ Usage:
                                  stream an MP4 or raw Annex-B H.264 file
   turzx brightness <0-100>       set the backlight
   turzx rotate <0-3>             set the display rotation
+  turzx monitor [--fps 30] [--bitrate 16000]
+                                 use the panel as an extended desktop
   turzx dashboard [--interval 1s]
                                  live system monitor on the panel
   turzx storage                  report the panel's SD card usage
@@ -141,6 +145,15 @@ func run(args []string) error {
 			return errors.New("usage: turzx extract <input.mp4> <output.h264>")
 		}
 		return cmdExtract(rest[0], rest[1])
+
+	case "monitor":
+		opts, err := parseMonitorArgs(rest)
+		if err != nil {
+			return err
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return cmdMonitor(ctx, dev, opts)
 
 	case "dashboard":
 		interval, err := parseInterval(rest)
@@ -308,6 +321,119 @@ func streamOnce(dev *usb.Device, f *os.File, size int64, isMP4 bool, path string
 	}
 	fmt.Printf("streaming %s to %s\n", filepath.Base(path), dev.Model())
 	return dev.StreamH264(src)
+}
+
+// monitorOpts holds the parsed flags for the monitor subcommand.
+type monitorOpts struct {
+	fps     int
+	bitrate int
+}
+
+// parseMonitorArgs accepts: [--fps N] [--bitrate KBPS]
+func parseMonitorArgs(args []string) (monitorOpts, error) {
+	opts := monitorOpts{fps: 30, bitrate: 16_000_000}
+	for i := 0; i < len(args); i++ {
+		switch arg := args[i]; {
+		case arg == "--fps":
+			if i+1 >= len(args) {
+				return opts, errors.New("--fps needs a value")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 1 || n > 60 {
+				return opts, fmt.Errorf("invalid --fps %q: expected 1-60", args[i])
+			}
+			opts.fps = n
+		case arg == "--bitrate":
+			if i+1 >= len(args) {
+				return opts, errors.New("--bitrate needs a value in kbit/s")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 100 {
+				return opts, fmt.Errorf("invalid --bitrate %q: expected kbit/s, at least 100", args[i])
+			}
+			opts.bitrate = n * 1000
+		case strings.HasPrefix(arg, "-"):
+			return opts, fmt.Errorf("unknown flag %q", arg)
+		default:
+			return opts, fmt.Errorf("unexpected argument %q", arg)
+		}
+	}
+	return opts, nil
+}
+
+// cmdMonitor makes the panel a real extended desktop: it creates a virtual
+// display, captures it, and streams the encoded result to the panel.
+func cmdMonitor(ctx context.Context, dev *usb.Device, opts monitorOpts) error {
+	w, h := dev.Portrait()
+
+	display, err := vdisplay.Create("TURZX", w, h, 60)
+	if err != nil {
+		return fmt.Errorf("create virtual display: %w", err)
+	}
+	defer display.Close()
+	fmt.Printf("created virtual display %d at %dx%d\n", display.ID(), w, h)
+
+	// The WindowServer publishes the new display asynchronously; asking
+	// ScreenCaptureKit to enumerate it too early finds nothing.
+	time.Sleep(1500 * time.Millisecond)
+
+	session, err := capture.Start(capture.Options{
+		DisplayID: display.ID(),
+		Width:     w,
+		Height:    h,
+		FPS:       opts.fps,
+		Bitrate:   opts.bitrate,
+	})
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	frames, bytes := 0, 0
+	start := time.Now()
+	lastReport := start
+
+	if err := dev.BeginPlayback(opts.fps); err != nil {
+		return err
+	}
+	fmt.Printf("streaming %dx%d @ %d fps, %d kbit/s to %s\n",
+		w, h, opts.fps, opts.bitrate/1000, dev.Model())
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("\nstopped after %d frames, %s (%.1f fps, %.0f KB/s)\n",
+				frames, humanBytes(int64(bytes)), float64(frames)/time.Since(start).Seconds(),
+				float64(bytes)/1024/time.Since(start).Seconds())
+			return dev.StopStream()
+		default:
+		}
+
+		frame, err := session.Next()
+		if err != nil {
+			return err
+		}
+		if err := dev.SendVideoFrame(frame); err != nil {
+			return err
+		}
+		frames++
+		bytes += len(frame)
+
+		// Once a second, report enough to tell "the encoder is starving for
+		// bits" apart from "the panel cannot keep up": if the rate sits at the
+		// configured bitrate the link is saturated, and if it sits well below
+		// it the source is simply static.
+		if verbose && time.Since(lastReport) >= time.Second {
+			elapsed := time.Since(start).Seconds()
+			fmt.Printf("frames=%6d  fps=%5.1f  avg=%7s  rate=%6.0f KB/s  queue=%d\n",
+				frames, float64(frames)/elapsed,
+				humanBytes(int64(bytes)/int64(max(frames, 1))),
+				float64(bytes)/1024/elapsed, dev.QueueDepth())
+			lastReport = time.Now()
+		}
+	}
 }
 
 // parseInterval accepts: [--interval <duration>]

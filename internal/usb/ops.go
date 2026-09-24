@@ -163,6 +163,12 @@ func (d *Device) StopStream() error {
 	return d.SendAck(block)
 }
 
+// QueueDepth reports how many frames the panel has buffered but not yet
+// displayed. It is the pipeline's latency in frames: a deep queue means the
+// host is feeding faster than the panel can present, so what is on screen
+// trails the source by that many frames.
+func (d *Device) QueueDepth() int { return d.queueDepth() }
+
 // queueDepth asks the device how much playback is still queued.
 func (d *Device) queueDepth() int {
 	block, err := proto.Command(proto.CmdStreamStatus, time.Now())
@@ -210,7 +216,44 @@ func (d *Device) BeginPlayback(fps int) error {
 	if err := d.Clear(); err != nil {
 		return fmt.Errorf("clear: %w", err)
 	}
-	return d.SetFrameRate(fps)
+	if err := d.SetFrameRate(fps); err != nil {
+		return err
+	}
+
+	// Negotiate once here rather than per frame, since SendVideoFrame needs the
+	// size and this costs a round trip.
+	d.chunkSize = d.ChunkSize()
+	return nil
+}
+
+// SendVideoFrame sends one encoded frame as part of an ongoing stream.
+//
+// Frames larger than the negotiated chunk size are split, and the call blocks
+// while the panel's playback queue is full so a live source is fed at the rate
+// the panel can actually display.
+func (d *Device) SendVideoFrame(frame []byte) error {
+	if len(frame) == 0 {
+		return nil
+	}
+	size := d.chunkSize
+	if size <= 0 {
+		size = defaultChunkSize
+	}
+
+	for offset := 0; offset < len(frame); offset += size {
+		end := min(offset+size, len(frame))
+		chunk, err := proto.H264Chunk(frame[offset:end], false, time.Now())
+		if err != nil {
+			return err
+		}
+		if _, err := d.Send(chunk); err != nil {
+			return err
+		}
+		if end < len(frame) {
+			d.waitForQueue()
+		}
+	}
+	return nil
 }
 
 // StreamH264 sends an Annex-B H.264 elementary stream, splitting it into chunks

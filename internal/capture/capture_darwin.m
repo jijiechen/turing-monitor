@@ -9,6 +9,7 @@
 // desktop, so this file re-emits the most recent frame on a timer when capture
 // goes quiet.
 
+#import <AppKit/AppKit.h>
 #import <Foundation/Foundation.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <VideoToolbox/VideoToolbox.h>
@@ -171,10 +172,29 @@ static dispatch_queue_t gQueue = NULL;
 
 // --- C API -----------------------------------------------------------------
 
+// ensureAppKitInitialised brings up enough of AppKit for ScreenCaptureKit to
+// work.
+//
+// A plain command-line tool has no NSApplication. Without one, building an
+// SCContentFilter raises an unrecognized-selector exception deep inside
+// CoreFoundation (it messages a private preferences object with a window
+// selector), which takes the whole process down rather than returning an error.
+// The accessory activation policy keeps this from stealing focus or appearing
+// in the Dock.
+static void ensureAppKitInitialised(void) {
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		[NSApplication sharedApplication];
+		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+	});
+}
+
 int turzx_capture_start(uint32_t displayID, int width, int height, int fps, int bitrate) {
 	@autoreleasepool {
 		if (gRunning) return TURZX_E_OK;
 		gLastError = TURZX_E_OK;
+
+		ensureAppKitInitialised();
 
 		if (gQueue == NULL) {
 			gQueue = dispatch_queue_create("turzx.capture", DISPATCH_QUEUE_SERIAL);
@@ -236,14 +256,27 @@ int turzx_capture_start(uint32_t displayID, int width, int height, int fps, int 
 		int32_t expectedFPS = (int32_t)fps;
 		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_RealTime, yes);
 		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_AllowFrameReordering, no);
-		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality, yes);
 		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_ProfileLevel,
 		                     kVTProfileLevel_H264_High_AutoLevel);
-		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_MaxKeyFrameInterval, (__bridge CFTypeRef)@(fps * 2));
+		// Refresh with an IDR at least once a second. A longer interval lets
+		// P-frame error accumulate, which shows up as trailing behind moving
+		// content -- very visible on a small panel, and worse than the extra
+		// bits a shorter GOP costs.
+		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_MaxKeyFrameInterval,
+		                     (__bridge CFTypeRef)@(fps));
+		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
+		                     (__bridge CFTypeRef)@(1.0));
 		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_ExpectedFrameRate,
 		                     (__bridge CFTypeRef)@(expectedFPS));
 		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_AverageBitRate,
 		                     (__bridge CFTypeRef)@(br));
+		// Allow brief bursts above the average: a desktop frame containing text
+		// needs far more bits than a mostly-static one, and capping it to the
+		// average is what makes text look soft.
+		double bytesPerSecond = (double)br / 8.0;
+		NSArray *limits = @[ @(bytesPerSecond * 1.5), @(1.0) ];
+		VTSessionSetProperty(gSession, kVTCompressionPropertyKey_DataRateLimits,
+		                     (__bridge CFTypeRef)limits);
 		VTCompressionSessionPrepareToEncodeFrames(gSession);
 
 		SCContentFilter *filter = [[SCContentFilter alloc] initWithDisplay:target excludingWindows:@[]];
@@ -252,7 +285,10 @@ int turzx_capture_start(uint32_t displayID, int width, int height, int fps, int 
 		cfg.height = (size_t)height;
 		cfg.pixelFormat = kCVPixelFormatType_32BGRA;
 		cfg.queueDepth = 5;
-		cfg.showsCursor = NO;
+		// The pointer must be composited into the frames: the panel is a real
+		// extended desktop, so without this the cursor vanishes whenever it
+		// crosses onto it.
+		cfg.showsCursor = YES;
 		cfg.minimumFrameInterval = CMTimeMake(1, (int32_t)fps);
 
 		gOutput = [[TURZXStreamOutput alloc] init];

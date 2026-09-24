@@ -14,8 +14,11 @@ const (
 	writeTimeout = 5 * time.Second
 	// readTimeout bounds the reply read. The device answers promptly.
 	readTimeout = 2 * time.Second
-	// flushTimeout is used to drain stale replies from the IN endpoint.
-	flushTimeout = 100 * time.Millisecond
+	// flushTimeout bounds each attempt to drain a stale reply from the IN
+	// endpoint. It must stay short: the device usually has nothing extra to
+	// send, so every drain attempt pays this timeout in full. At 100ms it
+	// dominated the per-frame budget and capped streaming at about 7.5 fps.
+	flushTimeout = 3 * time.Millisecond
 	// flushAttempts caps how many stale replies we drain at once.
 	flushAttempts = 5
 )

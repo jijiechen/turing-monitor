@@ -188,6 +188,10 @@ type Device struct {
 
 	// mu guards the endpoints, which do not support concurrent use.
 	mu sync.Mutex
+
+	// chunkSize is the H.264 chunk size negotiated when playback began. Zero
+	// means it has not been negotiated yet.
+	chunkSize int
 }
 
 // Model returns the panel variant.

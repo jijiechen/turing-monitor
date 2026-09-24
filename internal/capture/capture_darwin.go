@@ -8,7 +8,8 @@
 package capture
 
 /*
-#cgo LDFLAGS: -framework Foundation -framework ScreenCaptureKit -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics
+#cgo CFLAGS: -fobjc-arc
+#cgo LDFLAGS: -framework Foundation -framework ScreenCaptureKit -framework VideoToolbox -framework CoreMedia -framework CoreVideo -framework CoreGraphics -framework AppKit
 
 #include <stdint.h>
 #include <stdlib.h>

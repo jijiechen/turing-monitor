@@ -13,6 +13,7 @@
 package vdisplay
 
 /*
+#cgo CFLAGS: -fobjc-arc
 #cgo LDFLAGS: -framework Foundation -framework CoreGraphics -framework AppKit
 
 #include <stdint.h>
