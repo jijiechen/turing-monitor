@@ -28,6 +28,7 @@ func (m Model) String() string {
 // portrait orientation, as reported by the reference implementation.
 var Models = map[uint16]Model{
 	0x0028: {PID: 0x0028, Name: `Turing 2.8" round`, Width: 480, Height: 480},
+	0x0034: {PID: 0x0034, Name: `Turing 3.4" square`, Width: 480, Height: 480},
 	0x0046: {PID: 0x0046, Name: `Turing 4.6"`, Width: 320, Height: 960},
 	0x0050: {PID: 0x0050, Name: `Turing 5.2"`, Width: 720, Height: 1280},
 	0x0080: {PID: 0x0080, Name: `Turing 8.0"`, Width: 800, Height: 1280},
