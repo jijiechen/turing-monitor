@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"image"
 
+	xdraw "golang.org/x/image/draw"
+
 	"github.com/jijiechen/turing-monitor/internal/metrics"
 )
 
@@ -25,12 +27,42 @@ const (
 // rates must come from metrics.Delta of this snapshot against the previous
 // one; the first frame after startup has no previous sample and so shows zero
 // CPU and network activity until the second frame.
+// designShortSide is the shortest edge the fixed paddings and type sizes in
+// this file were chosen against. Card geometry is proportional but font sizes
+// are absolute, so on a panel much smaller than this the text is correct in
+// pixels and far too big in proportion — it overlaps its own cards.
+//
+// Rather than thread a scale factor through every draw call, render at the
+// design size and resample down. The ratio of type to card is then whatever a
+// large panel gets, which is what the sizes were picked for.
+const designShortSide = 720
+
 func Render(s metrics.Snapshot, rates metrics.Rates, w, h int, theme Theme) *image.RGBA {
+	if w <= 0 || h <= 0 {
+		return renderAt(s, rates, w, h, theme)
+	}
+	short := w
+	if h < short {
+		short = h
+	}
+	if short < designShortSide {
+		k := float64(designShortSide) / float64(short)
+		big := renderAt(s, rates, int(float64(w)*k), int(float64(h)*k), theme)
+		out := image.NewRGBA(image.Rect(0, 0, w, h))
+		xdraw.CatmullRom.Scale(out, out.Bounds(), big, big.Bounds(), xdraw.Over, nil)
+		return out
+	}
+	return renderAt(s, rates, w, h, theme)
+}
+
+func renderAt(s metrics.Snapshot, rates metrics.Rates, w, h int, theme Theme) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	c := newCanvas(img, theme)
 	c.fill(img.Bounds(), theme.Background)
 
-	if w > h {
+	// Square counts as wide: one stacked column needs far more height than a
+	// 480x480 panel has, and the two-column layout fits it.
+	if w >= h {
 		renderWide(c, s, rates, w, h)
 	} else {
 		renderTall(c, s, rates, w, h)
@@ -88,14 +120,22 @@ func renderWide(c *canvas, s metrics.Snapshot, rates metrics.Rates, w, h int) {
 	drawMemory(c, s, image.Rect(leftX, top+cpuH+cardGap, leftX+colW, bodyBottom))
 
 	// Right column: throughput, storage, and temperatures when there are any.
-	drawNetwork(c, rates, image.Rect(rightX, top, rightX+colW, top+networkHeight))
-	diskTop := top + networkHeight + cardGap
+	netH, diskH := networkHeight, 180
+	if len(s.Temps) == 0 {
+		if avail := bodyH - cardGap; netH > avail/2 {
+			netH = avail / 2
+		}
+	} else if avail := bodyH - 2*cardGap; netH+diskH > avail*2/3 {
+		netH, diskH = avail/3, avail/3
+	}
+
+	drawNetwork(c, rates, image.Rect(rightX, top, rightX+colW, top+netH))
+	diskTop := top + netH + cardGap
 
 	if len(s.Temps) == 0 {
 		drawDisk(c, s, image.Rect(rightX, diskTop, rightX+colW, bodyBottom))
 		return
 	}
-	diskH := 180
 	drawDisk(c, s, image.Rect(rightX, diskTop, rightX+colW, diskTop+diskH))
 	tempsTop := diskTop + diskH + cardGap
 	drawTemps(c, s, image.Rect(rightX, tempsTop, rightX+colW, bodyBottom))

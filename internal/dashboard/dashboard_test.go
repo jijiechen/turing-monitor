@@ -32,6 +32,7 @@ func TestRenderSizeAndBounds(t *testing.T) {
 	for _, size := range []struct{ w, h int }{
 		{720, 1280}, // the panel as it comes
 		{1280, 720}, // the panel on its side
+		{480, 480},  // a square panel: the 2.8" round and the 3.4"
 	} {
 		img := Render(sample(), metrics.Rates{CPUPercent: 15, RxPerSec: 4096, TxPerSec: 2048},
 			size.w, size.h, DefaultTheme)
@@ -79,6 +80,46 @@ func TestRenderWideDrawsBothColumns(t *testing.T) {
 			t.Errorf("column %d has %d painted pixels, want at least %d; "+
 				"the wide layout may not be drawing into it", i, got, min)
 		}
+	}
+}
+
+// TestRenderSquareUsesBothColumns guards the square case specifically.
+//
+// A square frame is not `w > h`, so it used to fall into the tall layout, which
+// stacks one column of fixed-height cards adding up to far more than 480px. The
+// frame rendered without error and the bottom third simply ran off the panel,
+// which is invisible to a bounds check.
+func TestRenderSquareUsesBothColumns(t *testing.T) {
+	const w, h = 480, 480
+	img := Render(sample(), metrics.Rates{CPUPercent: 40, RxPerSec: 4096, TxPerSec: 2048}, w, h, DefaultTheme)
+
+	bg := DefaultTheme.Background
+	counts := [2]int{}
+	bottomRow := 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			if uint8(r>>8) == bg.R && uint8(g>>8) == bg.G && uint8(b>>8) == bg.B {
+				continue
+			}
+			counts[x/(w/2)]++
+			if y > bottomRow {
+				bottomRow = y
+			}
+		}
+	}
+
+	for i, got := range counts {
+		if min := (w / 2) * h / 10; got < min {
+			t.Errorf("column %d has %d painted pixels, want at least %d; "+
+				"a square frame should use the two-column layout", i, got, min)
+		}
+	}
+
+	// Content must stop before the edge. If the tall layout is used the cards
+	// are clipped by the frame and painting runs to the very last row.
+	if bottomRow >= h-1 {
+		t.Errorf("content reaches row %d of %d; cards are being clipped by the panel edge", bottomRow, h)
 	}
 }
 
